@@ -1,0 +1,5 @@
+websocket-client
+pandas
+python-dotenv
+fredapi
+yfinance

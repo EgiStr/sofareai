@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  ingestion:
+    build: ./ingestion
+    container_name: sofare_ingestion
+    volumes:
+      - ./ingestion/src:/app/src
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    env_file: .env
+    network_mode: "host"
+    restart: unless-stopped
+
+  training:
+    build: ./training
+    container_name: sofare_training
+    volumes:
+      - ./training/src:/app/src
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      - mlflow
+
+  serving:
+    build: ./serving
+    container_name: sofare_serving
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./serving/src:/app/src
+      - ./data:/app/data
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      - mlflow
+      - training
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.9.2
+    container_name: sofare_mlflow
+    ports:
+      - "5000:5000"
+    command: mlflow server --backend-store-uri sqlite:////mlflow/mlflow.db --default-artifact-root ./mlruns --host 0.0.0.0
+    volumes:
+      - ./mlflow_data:/mlflow
