@@ -22,11 +22,11 @@ def main():
         storage.save_candle(candle)
 
     # Start Binance Client
-    client = BinanceClient(callback=on_candle_received)
+    client = BinanceClient(interval="10s", callback=on_candle_received)
     client.start()
 
     # Start Macro Client
-    macro_client = MacroClient(storage)
+    macro_client = MacroClient(storage, interval_seconds=10)
     macro_client.start()
 
     try:
