@@ -31,7 +31,11 @@ class MacroClient:
             'timestamp': datetime.now(),
             'fed_funds_rate': None,
             'gold_price': None,
-            'dxy': None
+            'dxy': None,
+            'sp500': None,
+            'vix': None,
+            'nasdaq': None,
+            'oil_price': None
         }
 
         # 1. FRED Data (Fed Funds Rate)
@@ -46,10 +50,10 @@ class MacroClient:
             except Exception as e:
                 self.logger.error(f"Error fetching FRED data: {e}")
 
-        # 2. Yahoo Finance (Gold & DXY)
+        # 2. Yahoo Finance (Gold, DXY, Indices, Oil)
         try:
-            # Gold Futures (GC=F), Dollar Index (DX-Y.NYB)
-            tickers = yf.Tickers("GC=F DX-Y.NYB")
+            # Tickers: Gold (GC=F), DXY (DX-Y.NYB), S&P500 (^GSPC), VIX (^VIX), NASDAQ (^IXIC), Oil (CL=F)
+            tickers = yf.Tickers("GC=F DX-Y.NYB ^GSPC ^VIX ^IXIC CL=F")
             
             # Gold
             gold = tickers.tickers['GC=F'].history(period="1d")
@@ -60,6 +64,38 @@ class MacroClient:
             dxy = tickers.tickers['DX-Y.NYB'].history(period="1d")
             if not dxy.empty:
                 data['dxy'] = float(dxy['Close'].iloc[-1])
+            
+            # S&P 500
+            sp500 = tickers.tickers['^GSPC'].history(period="1d")
+            if not sp500.empty:
+                data['sp500'] = float(sp500['Close'].iloc[-1])
+            
+            # VIX
+            try:
+                vix = tickers.tickers['^VIX'].history(period="1d")
+                if not vix.empty:
+                    data['vix'] = float(vix['Close'].iloc[-1])
+                else:
+                    # Fallback: try different period or set default
+                    vix_alt = tickers.tickers['^VIX'].history(period="5d", interval="1d")
+                    if not vix_alt.empty:
+                        data['vix'] = float(vix_alt['Close'].iloc[-1])
+                    else:
+                        data['vix'] = 20.0  # Default VIX value
+                        self.logger.warning("VIX data unavailable, using default value 20.0")
+            except Exception as e:
+                self.logger.warning(f"VIX fetch failed: {e}, using default value 20.0")
+                data['vix'] = 20.0
+            
+            # NASDAQ
+            nasdaq = tickers.tickers['^IXIC'].history(period="1d")
+            if not nasdaq.empty:
+                data['nasdaq'] = float(nasdaq['Close'].iloc[-1])
+            
+            # Oil (WTI Crude)
+            oil = tickers.tickers['CL=F'].history(period="1d")
+            if not oil.empty:
+                data['oil_price'] = float(oil['Close'].iloc[-1])
                 
         except Exception as e:
             self.logger.error(f"Error fetching Yahoo Finance data: {e}")

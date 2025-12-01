@@ -26,7 +26,7 @@ class DataStorage:
         macro_path = os.path.join(os.path.dirname(self.filepath), "macro.csv")
         try:
             if not os.path.exists(macro_path):
-                df = pd.DataFrame(columns=['timestamp', 'fed_funds_rate', 'gold_price', 'dxy'])
+                df = pd.DataFrame(columns=['timestamp', 'fed_funds_rate', 'gold_price', 'dxy', 'sp500', 'vix', 'nasdaq', 'oil_price'])
                 df.to_csv(macro_path, index=False)
             
             df = pd.DataFrame([macro_data])

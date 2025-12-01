@@ -31,7 +31,7 @@ class BinanceClient:
                         'volume': float(kline['v']),
                         'close_time': kline['T']
                     }
-                    self.logger.info(f"Received candle: {processed_data}")
+                    self.logger.info(f"Received candle: {processed_data['close']} at {processed_data['timestamp']}")
                     if self.callback:
                         self.callback(processed_data)
         except Exception as e:
@@ -39,16 +39,19 @@ class BinanceClient:
 
     def on_error(self, ws, error):
         self.logger.error(f"WebSocket error: {error}")
+        # Don't reconnect here, let the main loop handle it
 
     def on_close(self, ws, close_status_code, close_msg):
-        self.logger.info("WebSocket closed")
+        self.logger.info(f"WebSocket closed: {close_status_code} - {close_msg}")
 
     def on_open(self, ws):
-        self.logger.info("WebSocket connection opened")
+        self.logger.info("WebSocket connection opened successfully")
 
     def start(self):
         def run_ws():
             url_index = 0
+            reconnect_delay = 5  # Start with 5 seconds
+            
             while True:
                 try:
                     base_url = self.base_urls[url_index]
@@ -62,14 +65,22 @@ class BinanceClient:
                         on_error=self.on_error,
                         on_close=self.on_close
                     )
+                    
+                    # Reset delay on successful connection
+                    reconnect_delay = 5
+                    
                     self.ws.run_forever()
+                    
                 except Exception as e:
                     self.logger.error(f"WebSocket run error: {e}")
                 
                 # Switch to next URL on failure/close
                 url_index = (url_index + 1) % len(self.base_urls)
-                self.logger.info(f"Connection failed. Switching to next endpoint in 5 seconds...")
-                time.sleep(5)
+                
+                # Exponential backoff with max delay of 5 minutes
+                self.logger.info(f"Connection failed. Retrying in {reconnect_delay} seconds...")
+                time.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, 300)  # Max 5 minutes
 
         wst = threading.Thread(target=run_ws)
         wst.daemon = True

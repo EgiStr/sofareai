@@ -144,7 +144,7 @@ cython_debug/
 .vscode/
 *.swp
 
-.csv
+*.csv
 *.tsv
 *.parquet
 *.h5
@@ -160,3 +160,23 @@ mlruns/
 logs/
 *.gz
 *.db
+
+# Project specific
+mlflow_data/
+shared_model/
+data/*.csv
+!data/.gitkeep
+data/raw/
+data/processed/
+models/ 
+!models/.gitkeep
+!notebooks/.gitkeep
+reports/
+
+# data 
+*csv
+*tsv
+*parquet
+*h5
+*hdf5
+*db

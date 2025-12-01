@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOFARE-AI Ops Dashboard</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="dashboard-header">
+        <div class="header-left">
+            <h1><i class="fas fa-brain"></i> SOFARE-AI Ops Dashboard</h1>
+            <div class="system-status">
+                <span class="status-indicator online"></span>
+                <span>System Online</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="market-hours">
+                <i class="fas fa-clock"></i>
+                <span>Market: Open</span>
+            </div>
+            <div class="last-update">
+                <i class="fas fa-sync-alt"></i>
+                <span id="lastUpdate">Just now</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Layout -->
+    <div class="dashboard-container">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <ul class="nav-menu">
+                <li class="nav-item active" data-view="trading">
+                    <i class="fas fa-chart-line"></i>
+                    <span>Live Trading</span>
+                </li>
+                <li class="nav-item" data-view="mlops">
+                    <i class="fas fa-cogs"></i>
+                    <span>MLOps Health</span>
+                </li>
+                <li class="nav-item" data-view="system">
+                    <i class="fas fa-server"></i>
+                    <span>System Status</span>
+                </li>
+                <li class="nav-item" data-view="logs">
+                    <i class="fas fa-list"></i>
+                    <span>Activity Logs</span>
+                </li>
+                <li class="nav-item" data-view="predictions">
+                    <i class="fas fa-magic"></i>
+                    <span>Candlestick Predictions</span>
+                </li>
+            </ul>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Trading View -->
+            <div id="trading-view" class="view active">
+                <div class="view-header">
+                    <h2><i class="fas fa-chart-line"></i> Live Trading Command Center</h2>
+                </div>
+
+                <div class="widgets-grid">
+                    <!-- Price Chart Widget -->
+                    <div class="widget chart-widget">
+                        <div class="widget-header">
+                            <h3>BTC/USDT Price & Prediction</h3>
+                            <div class="widget-controls">
+                                <button class="timeframe-btn active" data-tf="1m">1M</button>
+                                <button class="timeframe-btn" data-tf="5m">5M</button>
+                                <button class="timeframe-btn" data-tf="15m">15M</button>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <div id="mainChart"></div>
+                            <div class="chart-legend">
+                                <div class="legend-item">
+                                    <div class="legend-color bull"></div>
+                                    <span>Bull Candles</span>
+                                </div>
+                                <div class="legend-item">
+                                    <div class="legend-color bear"></div>
+                                    <span>Bear Candles</span>
+                                </div>
+                                <div class="legend-item">
+                                    <div class="legend-color volume"></div>
+                                    <span>Volume</span>
+                                </div>
+                                <div class="legend-item">
+                                    <span style="font-size: 0.9rem; color: #888;">Zoom: Mouse wheel | Pan: Ctrl+drag</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Signal Panel -->
+                    <div class="widget signal-widget">
+                        <div class="widget-header">
+                            <h3>Trading Signal</h3>
+                        </div>
+                        <div class="signal-content">
+                            <div class="signal-indicator" id="mainSignal">
+                                <div class="signal-icon">
+                                    <i class="fas fa-arrow-up"></i>
+                                </div>
+                                <div class="signal-text">
+                                    <div class="signal-label">STRONG BUY</div>
+                                    <div class="signal-confidence">Confidence: 87%</div>
+                                </div>
+                            </div>
+                            <div class="signal-metrics">
+                                <div class="metric">
+                                    <span class="metric-label">Predicted Change</span>
+                                    <span class="metric-value positive">+2.4%</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Time Horizon</span>
+                                    <span class="metric-value">30 min</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Macro Context -->
+                    <div class="widget macro-widget">
+                        <div class="widget-header">
+                            <h3>Macro Context</h3>
+                        </div>
+                        <div class="macro-indicators">
+                            <div class="macro-item">
+                                <div class="macro-label">
+                                    <i class="fas fa-coins"></i>
+                                    <span>Gold (XAU/USD)</span>
+                                </div>
+                                <div class="macro-value positive">
+                                    <span>$2,045</span>
+                                    <span class="change">+0.8%</span>
+                                </div>
+                            </div>
+                            <div class="macro-item">
+                                <div class="macro-label">
+                                    <i class="fas fa-dollar-sign"></i>
+                                    <span>DXY Index</span>
+                                </div>
+                                <div class="macro-value negative">
+                                    <span>102.45</span>
+                                    <span class="change">-0.3%</span>
+                                </div>
+                            </div>
+                            <div class="macro-item">
+                                <div class="macro-label">
+                                    <i class="fas fa-chart-bar"></i>
+                                    <span>US10Y Yield</span>
+                                </div>
+                                <div class="macro-value neutral">
+                                    <span>4.25%</span>
+                                    <span class="change">0.0%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MLOps View -->
+            <div id="mlops-view" class="view">
+                <div class="view-header">
+                    <h2><i class="fas fa-cogs"></i> MLOps & Model Health</h2>
+                </div>
+
+                <div class="widgets-grid">
+                    <!-- Performance Metrics -->
+                    <div class="widget performance-widget">
+                        <div class="widget-header">
+                            <h3>Model Performance (Last 50 Predictions)</h3>
+                        </div>
+                        <div class="metrics-grid">
+                            <div class="metric-card">
+                                <div class="metric-title">RMSE</div>
+                                <div class="metric-value">0.0234</div>
+                                <div class="metric-change positive">↓ 2.1%</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-title">Accuracy</div>
+                                <div class="metric-value">78.5%</div>
+                                <div class="metric-change positive">↑ 3.2%</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-title">Precision</div>
+                                <div class="metric-value">82.1%</div>
+                                <div class="metric-change neutral">→ 0.5%</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Drift Monitor -->
+                    <div class="widget drift-widget">
+                        <div class="widget-header">
+                            <h3>Data Drift Monitor</h3>
+                        </div>
+                        <div class="drift-indicators">
+                            <div class="drift-item">
+                                <div class="drift-label">Volume Distribution</div>
+                                <div class="drift-status safe">
+                                    <i class="fas fa-check-circle"></i>
+                                    <span>Stable</span>
+                                </div>
+                                <div class="drift-value">PSI: 0.023</div>
+                            </div>
+                            <div class="drift-item">
+                                <div class="drift-label">Gold Price</div>
+                                <div class="drift-status warning">
+                                    <i class="fas fa-exclamation-triangle"></i>
+                                    <span>Monitoring</span>
+                                </div>
+                                <div class="drift-value">PSI: 0.089</div>
+                            </div>
+                            <div class="drift-item">
+                                <div class="drift-label">RSI Indicator</div>
+                                <div class="drift-status safe">
+                                    <i class="fas fa-check-circle"></i>
+                                    <span>Stable</span>
+                                </div>
+                                <div class="drift-value">PSI: 0.015</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SHAP Values -->
+                    <div class="widget shap-widget">
+                        <div class="widget-header">
+                            <h3>Prediction Explainability</h3>
+                        </div>
+                        <div class="shap-content">
+                            <div class="shap-title">Top Contributing Factors</div>
+                            <div class="shap-bars">
+                                <div class="shap-bar">
+                                    <div class="bar-label">DXY Index ↑</div>
+                                    <div class="bar-container">
+                                        <div class="bar-fill negative" style="width: 65%"></div>
+                                    </div>
+                                    <div class="bar-value">-0.65</div>
+                                </div>
+                                <div class="shap-bar">
+                                    <div class="bar-label">Volume Spike</div>
+                                    <div class="bar-container">
+                                        <div class="bar-fill positive" style="width: 45%"></div>
+                                    </div>
+                                    <div class="bar-value">+0.45</div>
+                                </div>
+                                <div class="shap-bar">
+                                    <div class="bar-label">RSI Oversold</div>
+                                    <div class="bar-container">
+                                        <div class="bar-fill positive" style="width: 35%"></div>
+                                    </div>
+                                    <div class="bar-value">+0.35</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System View -->
+            <div id="system-view" class="view">
+                <div class="view-header">
+                    <h2><i class="fas fa-server"></i> System Status & Monitoring</h2>
+                </div>
+
+                <div class="widgets-grid">
+                    <!-- Latency Monitor -->
+                    <div class="widget latency-widget">
+                        <div class="widget-header">
+                            <h3>System Latency</h3>
+                        </div>
+                        <div class="latency-metrics">
+                            <div class="latency-gauge">
+                                <div class="gauge-container">
+                                    <div class="gauge-fill" style="--percentage: 15"></div>
+                                    <div class="gauge-center">
+                                        <div class="latency-value">45ms</div>
+                                        <div class="latency-label">E2E Latency</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="latency-breakdown">
+                                <div class="latency-item">
+                                    <span>Data Ingestion</span>
+                                    <span class="latency-time">12ms</span>
+                                </div>
+                                <div class="latency-item">
+                                    <span>Model Inference</span>
+                                    <span class="latency-time">28ms</span>
+                                </div>
+                                <div class="latency-item">
+                                    <span>API Response</span>
+                                    <span class="latency-time">5ms</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Service Health -->
+                    <div class="widget health-widget">
+                        <div class="widget-header">
+                            <h3>Service Health</h3>
+                        </div>
+                        <div class="health-services">
+                            <div class="service-item">
+                                <div class="service-info">
+                                    <i class="fas fa-satellite-dish"></i>
+                                    <span>Data Ingestion</span>
+                                </div>
+                                <div class="service-status healthy">
+                                    <i class="fas fa-check-circle"></i>
+                                    <span>Healthy</span>
+                                </div>
+                            </div>
+                            <div class="service-item">
+                                <div class="service-info">
+                                    <i class="fas fa-brain"></i>
+                                    <span>ML Training</span>
+                                </div>
+                                <div class="service-status healthy">
+                                    <i class="fas fa-check-circle"></i>
+                                    <span>Healthy</span>
+                                </div>
+                            </div>
+                            <div class="service-item">
+                                <div class="service-info">
+                                    <i class="fas fa-rocket"></i>
+                                    <span>Prediction API</span>
+                                </div>
+                                <div class="service-status healthy">
+                                    <i class="fas fa-check-circle"></i>
+                                    <span>Healthy</span>
+                                </div>
+                            </div>
+                            <div class="service-item">
+                                <div class="service-info">
+                                    <i class="fas fa-database"></i>
+                                    <span>MLflow Tracking</span>
+                                </div>
+                                <div class="service-status healthy">
+                                    <i class="fas fa-check-circle"></i>
+                                    <span>Healthy</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Resource Usage -->
+                    <div class="widget resources-widget">
+                        <div class="widget-header">
+                            <h3>Resource Usage</h3>
+                        </div>
+                        <div class="resource-metrics">
+                            <div class="resource-item">
+                                <div class="resource-label">CPU Usage</div>
+                                <div class="resource-bar">
+                                    <div class="bar-fill" style="width: 35%"></div>
+                                </div>
+                                <div class="resource-value">35%</div>
+                            </div>
+                            <div class="resource-item">
+                                <div class="resource-label">Memory Usage</div>
+                                <div class="resource-bar">
+                                    <div class="bar-fill" style="width: 68%"></div>
+                                </div>
+                                <div class="resource-value">2.1GB / 3.2GB</div>
+                            </div>
+                            <div class="resource-item">
+                                <div class="resource-label">Disk I/O</div>
+                                <div class="resource-bar">
+                                    <div class="bar-fill" style="width: 22%"></div>
+                                </div>
+                                <div class="bar-value">+0.35</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Prediction Accuracy Chart -->
+                    <div class="widget accuracy-widget">
+                        <div class="widget-header">
+                            <h3>Prediction Accuracy Over Time</h3>
+                            <div class="accuracy-summary">
+                                <span class="accuracy-score">78.5%</span>
+                                <span class="accuracy-trend positive">↑ 3.2%</span>
+                            </div>
+                        </div>
+                        <div class="accuracy-chart-container">
+                            <canvas id="accuracyChart" width="300" height="200"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logs View -->
+            <div id="logs-view" class="view">
+                <div class="view-header">
+                    <h2><i class="fas fa-list"></i> Activity Logs</h2>
+                </div>
+                <div class="logs-container">
+                    <div class="log-entry">
+                        <div class="log-time">14:32:15</div>
+                        <div class="log-level info">INFO</div>
+                        <div class="log-message">Model retraining completed successfully</div>
+                    </div>
+                    <div class="log-entry">
+                        <div class="log-time">14:31:42</div>
+                        <div class="log-level success">SUCCESS</div>
+                        <div class="log-message">Prediction API latency: 45ms (target: <200ms)</div>
+                    </div>
+                    <div class="log-entry">
+                        <div class="log-time">14:30:18</div>
+                        <div class="log-level warning">WARNING</div>
+                        <div class="log-message">Gold price distribution shift detected (PSI: 0.089)</div>
+                    </div>
+                    <div class="log-entry">
+                        <div class="log-time">14:28:33</div>
+                        <div class="log-level info">INFO</div>
+                        <div class="log-message">New OHLCV data received: 120 candles processed</div>
+                    </div>
+                    <div class="log-entry">
+                        <div class="log-time">14:25:12</div>
+                        <div class="log-level success">SUCCESS</div>
+                        <div class="log-message">Macro data updated: Fed Funds 4.1%, DXY 102.45</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Candlestick Predictions View -->
+            <div id="predictions-view" class="view">
+                <div class="view-header">
+                    <h2><i class="fas fa-magic"></i> Candlestick Predictions</h2>
+                </div>
+
+                <div class="widgets-grid">
+                    <!-- Prediction Controls -->
+                    <div class="widget controls-widget">
+                        <div class="widget-header">
+                            <h3>Prediction Controls</h3>
+                        </div>
+                        <div class="prediction-controls">
+                            <div class="control-group">
+                                <label for="forecast-steps">Forecast Steps:</label>
+                                <select id="forecast-steps" class="control-select">
+                                    <option value="1">1 Step</option>
+                                    <option value="3">3 Steps</option>
+                                    <option value="5" selected>5 Steps</option>
+                                    <option value="10">10 Steps</option>
+                                </select>
+                            </div>
+                            <div class="control-buttons">
+                                <button id="generate-predictions" class="btn-primary">
+                                    <i class="fas fa-magic"></i> Generate Predictions
+                                </button>
+                                <button id="refresh-predictions" class="btn-secondary">
+                                    <i class="fas fa-sync"></i> Refresh Data
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Prediction Status -->
+                    <div class="widget status-widget">
+                        <div class="widget-header">
+                            <h3>Prediction Status</h3>
+                        </div>
+                        <div class="prediction-status">
+                            <div class="status-item">
+                                <span class="status-label">Model Version:</span>
+                                <span class="status-value" id="pred-model-version">-</span>
+                            </div>
+                            <div class="status-item">
+                                <span class="status-label">Drift Status:</span>
+                                <span class="status-value" id="pred-drift-status">-</span>
+                            </div>
+                            <div class="status-item">
+                                <span class="status-label">Last Update:</span>
+                                <span class="status-value" id="pred-last-update">-</span>
+                            </div>
+                            <div class="status-item">
+                                <span class="status-label">Forecast Steps:</span>
+                                <span class="status-value" id="pred-steps">-</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Candlestick Prediction Chart -->
+                    <div class="widget chart-widget full-width">
+                        <div class="widget-header">
+                            <h3>Candlestick Predictions</h3>
+                            <div class="chart-legend">
+                                <div class="legend-item">
+                                    <div class="legend-color historical"></div>
+                                    <span>Historical Data</span>
+                                </div>
+                                <div class="legend-item">
+                                    <div class="legend-color predicted"></div>
+                                    <span>Predicted Candles</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="predictionChart" width="800" height="400"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Prediction Details -->
+                    <div class="widget details-widget">
+                        <div class="widget-header">
+                            <h3>Prediction Details</h3>
+                        </div>
+                        <div class="prediction-details">
+                            <div class="detail-section">
+                                <h4>Next Predicted Candle</h4>
+                                <div class="candle-details" id="next-candle-details">
+                                    <div class="detail-row">
+                                        <span class="detail-label">Open:</span>
+                                        <span class="detail-value" id="next-open">-</span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="detail-label">High:</span>
+                                        <span class="detail-value" id="next-high">-</span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="detail-label">Low:</span>
+                                        <span class="detail-value" id="next-low">-</span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="detail-label">Close:</span>
+                                        <span class="detail-value" id="next-close">-</span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="detail-label">Volume:</span>
+                                        <span class="detail-value" id="next-volume">-</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Right Sidebar -->
+        <aside class="right-sidebar">
+            <div class="sidebar-widget watchlist-widget">
+                <div class="widget-header">
+                    <h4><i class="fas fa-list"></i> Daftar Pantau</h4>
+                    <button class="icon-btn" style="background: none; border: none; color: #888; cursor: pointer;"><i class="fas fa-plus"></i></button>
+                </div>
+                <div class="watchlist-list">
+                    <div class="watchlist-item">
+                        <div class="wl-symbol">
+                            <span class="symbol-name">BTCUSDT</span>
+                            <span class="symbol-desc">Bitcoin</span>
+                        </div>
+                        <div class="wl-price up">
+                            <span class="price-val">43,250.00</span>
+                            <span class="price-change">+1.2%</span>
+                        </div>
+                    </div>
+                    <div class="watchlist-item">
+                        <div class="wl-symbol">
+                            <span class="symbol-name">ETHUSDT</span>
+                            <span class="symbol-desc">Ethereum</span>
+                        </div>
+                        <div class="wl-price down">
+                            <span class="price-val">2,250.00</span>
+                            <span class="price-change">-0.5%</span>
+                        </div>
+                    </div>
+                    <div class="watchlist-item">
+                        <div class="wl-symbol">
+                            <span class="symbol-name">DXY</span>
+                            <span class="symbol-desc">US Dollar Index</span>
+                        </div>
+                        <div class="wl-price up">
+                            <span class="price-val">102.45</span>
+                            <span class="price-change">+0.1%</span>
+                        </div>
+                    </div>
+                    <div class="watchlist-item">
+                        <div class="wl-symbol">
+                            <span class="symbol-name">GOLD</span>
+                            <span class="symbol-desc">Gold Futures</span>
+                        </div>
+                        <div class="wl-price up">
+                            <span class="price-val">2,045.10</span>
+                            <span class="price-change">+0.3%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-widget">
+                <div class="widget-header">
+                    <h4><i class="fas fa-newspaper"></i> Market News</h4>
+                </div>
+                <div class="news-feed">
+                    <div class="news-item">
+                        <div class="news-sentiment positive">
+                            <i class="fas fa-arrow-up"></i>
+                        </div>
+                        <div class="news-content">
+                            <div class="news-title">Fed Signals Pause in Rate Hikes</div>
+                            <div class="news-time">2 min ago</div>
+                        </div>
+                    </div>
+                    <div class="news-item">
+                        <div class="news-sentiment negative">
+                            <i class="fas fa-arrow-down"></i>
+                        </div>
+                        <div class="news-content">
+                            <div class="news-title">Bitcoin Volatility Spikes on ETF News</div>
+                            <div class="news-time">5 min ago</div>
+                        </div>
+                    </div>
+                    <div class="news-item">
+                        <div class="news-sentiment neutral">
+                            <i class="fas fa-minus"></i>
+                        </div>
+                        <div class="news-content">
+                            <div class="news-title">Gold Futures Trading at Record Highs</div>
+                            <div class="news-time">8 min ago</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-widget">
+                <div class="widget-header">
+                    <h4><i class="fas fa-bell"></i> Recent Alerts</h4>
+                </div>
+                <div class="alerts-list">
+                    <div class="alert-item warning">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span>Model drift detected on Gold feature</span>
+                    </div>
+                    <div class="alert-item success">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Retraining completed successfully</span>
+                    </div>
+                    <div class="alert-item info">
+                        <i class="fas fa-info-circle"></i>
+                        <span>New macro data available</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

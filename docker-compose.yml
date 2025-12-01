@@ -7,6 +7,7 @@ services:
       - ./data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
+      - DATA_SOURCE=${DATA_SOURCE:-binance}
     env_file: .env
     network_mode: "host"
     restart: unless-stopped
@@ -17,6 +18,7 @@ services:
     volumes:
       - ./training/src:/app/src
       - ./data:/app/data
+      - ./shared_model:/app/shared_model
     environment:
       - PYTHONUNBUFFERED=1
       - MLFLOW_TRACKING_URI=http://mlflow:5000
@@ -31,6 +33,7 @@ services:
     volumes:
       - ./serving/src:/app/src
       - ./data:/app/data
+      - ./shared_model:/app/shared_model
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
     depends_on:
@@ -42,6 +45,6 @@ services:
     container_name: sofare_mlflow
     ports:
       - "5000:5000"
-    command: mlflow server --backend-store-uri sqlite:////mlflow/mlflow.db --default-artifact-root ./mlruns --host 0.0.0.0
+    command: mlflow server --backend-store-uri file:///mlflow --default-artifact-root /mlflow/artifacts --host 0.0.0.0
     volumes:
       - ./mlflow_data:/mlflow
