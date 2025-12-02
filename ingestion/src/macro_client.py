@@ -25,6 +25,109 @@ class MacroClient:
             self.logger.warning(f"Failed to init FRED: {e}. Macro data might be incomplete.")
             self.fred = None
 
+    def fetch_historical_macro(self, lookback_days=365):
+        """
+        Fetch historical macro data for the past N days.
+        
+        Args:
+            lookback_days: Number of days to look back (default: 365 for 1 year)
+        
+        Returns:
+            List of macro data dictionaries with timestamps
+        """
+        self.logger.info(f"Fetching historical macro data for the past {lookback_days} days...")
+        
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=lookback_days)
+        
+        # Initialize dataframes dictionary
+        all_data = {}
+        
+        # 1. FRED Data (Fed Funds Rate / 10-Year Treasury)
+        if self.fred:
+            try:
+                fed_series = self.fred.get_series('DGS10', start_date, end_date)
+                if not fed_series.empty:
+                    all_data['fed_funds_rate'] = fed_series
+                    self.logger.info(f"Fetched {len(fed_series)} FRED data points")
+            except Exception as e:
+                self.logger.error(f"Error fetching historical FRED data: {e}")
+        
+        # 2. Yahoo Finance Historical Data
+        try:
+            # Download historical data for all tickers at once
+            tickers_str = "GC=F DX-Y.NYB ^GSPC ^VIX ^IXIC CL=F"
+            self.logger.info(f"Downloading Yahoo Finance data from {start_date.date()} to {end_date.date()}...")
+            
+            yf_data = yf.download(
+                tickers_str,
+                start=start_date,
+                end=end_date,
+                interval="1d",
+                progress=False
+            )
+            
+            if not yf_data.empty:
+                # Extract Close prices for each ticker
+                close_data = yf_data['Close'] if 'Close' in yf_data.columns.get_level_values(0) else yf_data
+                
+                ticker_mapping = {
+                    'GC=F': 'gold_price',
+                    'DX-Y.NYB': 'dxy',
+                    '^GSPC': 'sp500',
+                    '^VIX': 'vix',
+                    '^IXIC': 'nasdaq',
+                    'CL=F': 'oil_price'
+                }
+                
+                for ticker, col_name in ticker_mapping.items():
+                    if ticker in close_data.columns:
+                        all_data[col_name] = close_data[ticker]
+                
+                self.logger.info(f"Fetched {len(close_data)} days of Yahoo Finance data")
+                
+        except Exception as e:
+            self.logger.error(f"Error fetching historical Yahoo Finance data: {e}")
+        
+        # 3. Merge all data into a single DataFrame
+        if not all_data:
+            self.logger.warning("No historical macro data fetched")
+            return []
+        
+        # Create a combined DataFrame
+        combined_df = pd.DataFrame(all_data)
+        combined_df.index = pd.to_datetime(combined_df.index)
+        combined_df = combined_df.sort_index()
+        
+        # Forward fill missing values (markets closed on weekends, etc.)
+        combined_df = combined_df.ffill()
+        
+        # Convert to list of dictionaries - EXPAND TO MINUTE LEVEL
+        macro_records = []
+        try:
+            for timestamp, row in combined_df.iterrows():
+                # For each day, create 1440 minute entries (24 hours * 60 minutes)
+                day_start = timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+                for minute_offset in range(1440):  # 24 * 60 = 1440 minutes per day
+                    minute_timestamp = day_start + timedelta(minutes=minute_offset)
+                    record = {
+                        'timestamp': minute_timestamp,
+                        'fed_funds_rate': row.get('fed_funds_rate'),
+                        'gold_price': row.get('gold_price'),
+                        'dxy': row.get('dxy'),
+                        'sp500': row.get('sp500'),
+                        'vix': row.get('vix', 20.0),  # Default VIX
+                        'nasdaq': row.get('nasdaq'),
+                        'oil_price': row.get('oil_price')
+                    }
+                    macro_records.append(record)
+            
+            self.logger.info(f"Prepared {len(macro_records)} historical macro records (expanded to minute level)")
+        except Exception as e:
+            self.logger.error(f"Error expanding macro data to minute level: {e}")
+            return []
+        return macro_records
+
     def fetch_data(self):
         self.logger.info("Fetching macro data...")
         data = {
@@ -101,7 +204,19 @@ class MacroClient:
             self.logger.error(f"Error fetching Yahoo Finance data: {e}")
 
         self.logger.info(f"Macro data fetched: {data}")
-        self.storage.save_macro(data)
+        
+        # Expand hourly data to minute level (60 minutes per hour)
+        current_hour = data['timestamp'].replace(minute=0, second=0, microsecond=0)
+        minute_records = []
+        for minute_offset in range(60):  # 60 minutes per hour
+            minute_timestamp = current_hour + timedelta(minutes=minute_offset)
+            minute_record = data.copy()
+            minute_record['timestamp'] = minute_timestamp
+            minute_records.append(minute_record)
+        
+        # Save all minute records
+        for record in minute_records:
+            self.storage.save_macro(record)
 
     def start(self):
         self.running = True

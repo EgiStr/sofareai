@@ -1,6 +1,0 @@
-black
-flake8
-pytest
-isort
-mypy
-pre-commit

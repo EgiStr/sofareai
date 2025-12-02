@@ -165,14 +165,12 @@ logs/
 mlflow_data/
 shared_model/
 data/*.csv
-!data/.gitkeep
 data/raw/
 data/processed/
 models/ 
-!models/.gitkeep
-!notebooks/.gitkeep
 reports/
 
+data/
 # data 
 *csv
 *tsv

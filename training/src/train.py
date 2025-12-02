@@ -41,7 +41,7 @@ def load_data():
         if os.path.exists(MACRO_PATH):
             macro_df = pd.read_csv(MACRO_PATH)
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            macro_df['timestamp'] = pd.to_datetime(macro_df['timestamp'])
+            macro_df['timestamp'] = pd.to_datetime(macro_df['timestamp'], format='mixed', errors='coerce')
             
             df = pd.merge_asof(df.sort_values('timestamp'), 
                                macro_df.sort_values('timestamp'), 

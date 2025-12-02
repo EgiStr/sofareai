@@ -3,6 +3,20 @@
 ## Architecture Overview
 SOFARE-AI is a microservices-based ML pipeline for cryptocurrency price prediction using multi-modal data: OHLCV from Binance, macro indicators (Fed Funds Rate), and Safe Haven assets (Gold, DXY, S&P500, VIX, NASDAQ, Oil). Services: ingestion (real-time data), training (PyTorch with rolling retraining), serving (FastAPI API), MLflow (model tracking).
 
+## Project Structure
+```
+sofareai/
+├── data/               # Shared data storage (CSV)
+├── ingestion/          # Data ingestion service
+├── serving/            # Model serving API
+├── training/           # Model training service
+├── tests/              # Unit tests
+├── notebooks/          # Jupyter notebooks
+├── mlflow_data/        # MLflow tracking data
+├── docker-compose.yml  # Orchestration
+└── Makefile            # Automation
+```
+
 ## Key Components
 - **Ingestion**: WebSocket client for Binance streams, FRED/yfinance for macro/safe haven data, saves to shared CSV in `/app/data`.
 - **Training**: Loads merged multi-modal data, adds 19+ TA indicators, trains SofareM3 (Transformer/TCN encoders + attention fusion + multi-task head), logs to MLflow.
@@ -10,9 +24,14 @@ SOFARE-AI is a microservices-based ML pipeline for cryptocurrency price predicti
 - **Data Flow**: Ingestion → shared CSVs → Training → MLflow → Serving.
 
 ## Development Workflows
-- **Build/Run**: `docker compose build && docker compose up` (ingestion uses host network for WebSocket).
+- **Management**: Use `make` commands for standard operations.
+  - `make build`: Build all services.
+  - `make up`: Start the stack in detached mode.
+  - `make logs`: View logs for all services.
+  - `make down`: Stop and remove containers.
+  - `make test`: Run unit tests.
+  - `make clean`: Remove artifacts and temporary files.
 - **Training**: Runs continuously in container, retrains on rolling windows, checks drift with KS test.
-- **Testing**: Unit tests in `tests/`, run via `python -m unittest` inside containers.
 - **Debugging**: Logs to stdout, MLflow UI at localhost:5000, API at localhost:8000/docs.
 
 ## Conventions
