@@ -734,47 +734,8 @@ study = optuna.create_study(direction="maximize")
 study.optimize(objective, n_trials=50, timeout=3600)
 ```
 
-## 🚀 Deployment & Serving
+## 🚀  Serving
 
-### Deployment Strategies
-
-**Blue-Green Deployment:**
-```mermaid
-graph TB
-    LB[Load Balancer]
-
-    subgraph Blue["Blue (Active)"]
-        B1[Ingestion]
-        B2[Training]
-        B3[Serving]
-    end
-
-    subgraph Green["Green (Standby)"]
-        G1[Ingestion]
-        G2[Training]
-        G3[Serving]
-    end
-
-    LB -->|Active| Blue
-    LB -.->|Standby| Green
-```
-
-**Canary Deployment:**
-```mermaid
-graph LR
-    LB[Load Balancer]
-
-    subgraph Stable
-        S[Production v1.0.0]
-    end
-
-    subgraph Canary
-        C[New Version v1.1.0]
-    end
-
-    LB -->|90%| Stable
-    LB -->|10%| Canary
-```
 
 ### FastAPI Serving Service
 
@@ -1027,45 +988,7 @@ jobs:
           docker push sofareai/training:latest
           docker push sofareai/serving:latest
 
-  deploy-staging:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    environment: staging
-    steps:
-      - name: Deploy to staging
-        run: |
-          kubectl set image deployment/sofareai-staging \
-            ingestion=sofareai/ingestion:latest \
-            training=sofareai/training:latest \
-            serving=sofareai/serving:latest
 
-  deploy-production:
-    needs: deploy-staging
-    runs-on: ubuntu-latest
-    environment: production
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Canary deployment
-        run: |
-          # Deploy canary (10% traffic)
-          kubectl set image deployment/sofareai-canary \
-            serving=sofareai/serving:latest
-
-          # Monitor for 30 minutes
-          sleep 1800
-
-          # Check error rate
-          ERROR_RATE=$(kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/default/pods/*/http_requests_error_rate)
-
-          if (( $(echo "$ERROR_RATE > 0.05" | bc -l) )); then
-            echo "Error rate too high, rolling back"
-            kubectl rollout undo deployment/sofareai-canary
-            exit 1
-          fi
-
-          # Promote to full production
-          kubectl set image deployment/sofareai-production \
-            serving=sofareai/serving:latest
 ```
 
 ### Automated Model Retraining
