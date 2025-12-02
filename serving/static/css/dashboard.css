@@ -333,6 +333,76 @@ body {
     border-color: var(--success-color);
 }
 
+/* Custom Range Controls */
+.timeframe-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    width: 100%;
+}
+
+.timeframe-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.custom-range-controls {
+    border-top: 1px solid var(--border-color);
+    padding-top: 1rem;
+}
+
+.date-range-picker {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.date-input {
+    padding: 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background-color: var(--tertiary-bg);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    min-width: 180px;
+}
+
+.date-input:focus {
+    outline: none;
+    border-color: var(--success-color);
+    box-shadow: 0 0 0 2px rgba(0, 212, 170, 0.2);
+}
+
+.date-separator {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.custom-range-btn {
+    padding: 0.5rem 1rem;
+    background-color: var(--info-color);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: var(--transition);
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.custom-range-btn:hover {
+    background-color: #0056cc;
+    border-color: var(--info-color);
+}
+
+.custom-range-btn i {
+    font-size: 0.8rem;
+}
+
 /* Signal Widget */
 .signal-content {
     padding: 2rem;

@@ -1,0 +1,227 @@
+# SOFARE-AI Documentation Configuration
+# MkDocs Material Theme
+
+site_name: SOFARE-AI
+site_description: Multi-modal ML Pipeline for Cryptocurrency Price Prediction
+site_author: SOFARE-AI Team
+site_url: https://sofareai.github.io/sofareai
+
+# Repository
+repo_name: sofareai/sofareai
+repo_url: https://github.com/sofareai/sofareai
+edit_uri: edit/main/docs/
+
+# Copyright
+copyright: Copyright &copy; 2024-2025 SOFARE-AI Team
+
+# Theme Configuration
+theme:
+  name: material
+  custom_dir: docs/overrides
+  language: en
+  
+  features:
+    # Navigation
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - navigation.footer
+    - navigation.tracking
+    - navigation.indexes
+    
+    # Search
+    - search.suggest
+    - search.highlight
+    - search.share
+    
+    # Content
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    
+    # TOC
+    - toc.follow
+    - toc.integrate
+    
+    # Announce
+    - announce.dismiss
+  
+  palette:
+    # Light mode
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    
+    # Dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  
+  font:
+    text: Roboto
+    code: Roboto Mono
+  
+  icon:
+    logo: material/chart-line
+    repo: fontawesome/brands/github
+
+# Plugins
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+  
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: timeago
+  
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_category_heading: true
+  
+  - tags:
+      tags_file: tags.md
+
+# Extensions
+markdown_extensions:
+  # Python Markdown
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  
+  # PyMdown Extensions
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.critic
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: sofareai
+      repo: sofareai
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      auto_append:
+        - includes/abbreviations.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+# Page Tree
+nav:
+  - Home: index.md
+  
+  - Getting Started:
+    - getting-started/index.md
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - Configuration: getting-started/configuration.md
+  
+  - Architecture:
+    - architecture/index.md
+    - System Overview: architecture/overview.md
+    - Data Pipeline: architecture/data-pipeline.md
+    - Model Architecture: architecture/model.md
+    - MLOps Pipeline: architecture/mlops.md
+  
+  - Components:
+    - components/index.md
+    - Ingestion Service: components/ingestion.md
+    - Training Service: components/training.md
+    - Serving Service: components/serving.md
+    - MLflow Tracking: components/mlflow.md
+  
+  - Operations:
+    - operations/index.md
+    - Deployment: operations/deployment.md
+    - Monitoring: operations/monitoring.md
+    - Drift Detection: operations/drift-detection.md
+    - Data Training Strategy: operations/data-training-strategy.md
+    - Hyperparameter Tuning: operations/hyperparameter-tuning.md
+    - Semantic Versioning: operations/versioning.md
+    - Rollback: operations/rollback.md
+  
+  - API Reference:
+    - api/index.md
+    - Prediction API: api/prediction.md
+    - Health & Metrics: api/health.md
+    - Data Endpoints: api/data.md
+  
+  - Development:
+    - development/index.md
+    - Contributing: development/contributing.md
+    - Code Style: development/code-style.md
+    - Testing: development/testing.md
+    - CI/CD: development/cicd.md
+  
+  - Changelog: changelog.md
+  - Tags: tags.md
+
+# Extra Configuration
+extra:
+  version:
+    provider: mike
+  
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/sofareai
+    - icon: fontawesome/brands/docker
+      link: https://hub.docker.com/r/sofareai
+  
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX
+  
+  consent:
+    title: Cookie consent
+    description: >-
+      We use cookies to recognize your repeated visits and preferences,
+      as well as to measure the effectiveness of our documentation.
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js

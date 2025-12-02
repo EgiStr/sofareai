@@ -21,7 +21,11 @@ services:
       - ./shared_model:/app/shared_model
     environment:
       - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - MODEL_REGISTRY_PATH=/app/shared_model/registry
+      - MAX_DATA_POINTS=2000000
+      - GIT_PYTHON_REFRESH=quiet
     depends_on:
       - mlflow
 

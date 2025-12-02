@@ -22,18 +22,47 @@ function initializeDashboard() {
         });
     });
 
-    // Timeframe buttons
+    // Timeframe buttons - Dynamic Loading Implementation
     const timeframeBtns = document.querySelectorAll('.timeframe-btn');
     timeframeBtns.forEach(btn => {
-        btn.addEventListener('click', function() {
+        btn.addEventListener('click', async function() {
             const container = this.closest('.widget-header');
             container.querySelectorAll('.timeframe-btn').forEach(b => b.classList.remove('active'));
             this.classList.add('active');
 
-            // Here you would update the chart data
-            showToast('Chart timeframe updated', 'info');
+            const timeframe = this.getAttribute('data-tf');
+            currentTimeframe = timeframe; // Update current timeframe
+            await loadTimeframeData(timeframe);
         });
     });
+
+    // Custom range button
+    const loadCustomRangeBtn = document.getElementById('loadCustomRange');
+    if (loadCustomRangeBtn) {
+        loadCustomRangeBtn.addEventListener('click', async function() {
+            const startDateInput = document.getElementById('startDate');
+            const endDateInput = document.getElementById('endDate');
+
+            if (!startDateInput.value || !endDateInput.value) {
+                showToast('Please select both start and end dates', 'warning');
+                return;
+            }
+
+            const startDate = new Date(startDateInput.value);
+            const endDate = new Date(endDateInput.value);
+
+            if (startDate >= endDate) {
+                showToast('Start date must be before end date', 'error');
+                return;
+            }
+
+            // Deactivate timeframe buttons when using custom range
+            document.querySelectorAll('.timeframe-btn').forEach(btn => btn.classList.remove('active'));
+
+            // Load custom range data
+            await loadCustomRangeData(startDate.getTime(), endDate.getTime());
+        });
+    }
 
     // Initialize real-time updates
     startRealTimeUpdates();
@@ -256,29 +285,179 @@ function updateSignals() {
     }
 }
 
-function updatePerformanceMetrics() {
-    const metrics = document.querySelectorAll('.metric-card');
-    metrics.forEach(metric => {
-        const valueElement = metric.querySelector('.metric-value');
-        const changeElement = metric.querySelector('.metric-change');
+async function loadCustomRangeData(startTime, endTime) {
+    if (!window.mainChart) return;
 
-        if (valueElement && changeElement) {
-            // Small random changes
-            const currentValue = parseFloat(valueElement.textContent);
-            const change = (Math.random() - 0.5) * 0.01;
-            const newValue = currentValue + change;
+    try {
+        showToast(`Loading custom range data from ${new Date(startTime).toLocaleString()} to ${new Date(endTime).toLocaleString()}...`, 'info');
 
-            valueElement.textContent = newValue.toFixed(4);
+        // Load data for the custom range
+        const response = await fetchData(`/api/ohlcv?start=${startTime}&end=${endTime}&interval=1m`);
 
-            if (change > 0) {
-                changeElement.textContent = `↑ ${(change * 100).toFixed(1)}%`;
-                changeElement.className = 'metric-change positive';
-            } else {
-                changeElement.textContent = `↓ ${Math.abs(change * 100).toFixed(1)}%`;
-                changeElement.className = 'metric-change negative';
+        if (!response || response.error || !response.data || response.data.length === 0) {
+            showToast('No data available for the selected date range', 'warning');
+            return;
+        }
+
+        const ohlcvData = response.data;
+        console.log(`Loaded ${ohlcvData.length} candles for custom range (${new Date(startTime).toISOString()} to ${new Date(endTime).toISOString()})`);
+
+        // Clear any existing timeframe data - no caching for custom ranges
+        timeframeData = {};
+        timeframeData['custom'] = {
+            data: ohlcvData,
+            startTime: startTime,
+            endTime: endTime,
+            oldestTimestamp: startTime,
+            newestTimestamp: endTime
+        };
+
+        currentTimeframe = 'custom';
+
+        // Update chart with fresh data
+        updateChartWithCustomRangeData(ohlcvData, startTime, endTime);
+
+        showToast(`Custom range loaded (${ohlcvData.length} candles)`, 'success');
+
+    } catch (error) {
+        console.error('Error loading custom range data:', error);
+        showToast('Failed to load custom range data', 'error');
+    }
+}
+
+// Helper function to update chart with timeframe data
+function updateChartWithTimeframeData(ohlcvData, interval) {
+    // Format data for ApexCharts
+    const validData = ohlcvData.filter(item => 
+        item.timestamp && typeof item.close === 'number'
+    );
+    
+    const candleData = validData.map(item => ({
+        x: new Date(item.timestamp).getTime(),
+        y: [item.open, item.high, item.low, item.close]
+    }));
+    
+    const volumeData = validData.map(item => ({
+        x: new Date(item.timestamp).getTime(),
+        y: item.volume,
+        fillColor: item.close >= item.open ? '#089981' : '#f23645'
+    }));
+    
+    // Update chart series
+    window.mainChart.updateSeries([{
+        name: `BTC/USDT (${interval})`,
+        data: candleData
+    }, {
+        name: 'Volume',
+        data: volumeData
+    }]);
+    
+    // Update x-axis time format based on interval
+    const timeFormats = {
+        '1m': { unit: 'minute', displayFormats: { minute: 'HH:mm' } },
+        '5m': { unit: 'minute', displayFormats: { minute: 'HH:mm' } },
+        '15m': { unit: 'minute', displayFormats: { minute: 'HH:mm' } },
+        '30m': { unit: 'minute', displayFormats: { minute: 'HH:mm' } },
+        '1h': { unit: 'hour', displayFormats: { hour: 'MMM dd HH:mm' } },
+        '4h': { unit: 'hour', displayFormats: { hour: 'MMM dd HH:mm' } },
+        '1d': { unit: 'day', displayFormats: { day: 'MMM dd' } }
+    };
+    
+    window.mainChart.updateOptions({
+        xaxis: {
+            type: 'datetime',
+            labels: {
+                datetimeUTC: false,
+                style: { colors: '#787b86', fontSize: '11px' },
+                datetimeFormatter: {
+                    year: 'yyyy',
+                    month: "MMM 'yy",
+                    day: 'dd MMM',
+                    hour: 'HH:mm'
+                }
+            },
+            axisBorder: { color: '#2a2e39' },
+            axisTicks: { color: '#2a2e39' },
+            crosshairs: {
+                show: true,
+                stroke: { color: '#505050', width: 1, dashArray: 3 }
             }
         }
     });
+    
+    // Update current price display
+    const latestData = validData[validData.length - 1];
+    if (latestData) {
+        updateCurrentPrice(latestData.close);
+    }
+}
+
+// Helper function to update chart with custom range data
+function updateChartWithCustomRangeData(ohlcvData, startTime, endTime) {
+    // Format data for ApexCharts
+    const validData = ohlcvData.filter(item => 
+        item.timestamp && typeof item.close === 'number'
+    );
+    
+    const candleData = validData.map(item => ({
+        x: new Date(item.timestamp).getTime(),
+        y: [item.open, item.high, item.low, item.close]
+    }));
+    
+    const volumeData = validData.map(item => ({
+        x: new Date(item.timestamp).getTime(),
+        y: item.volume,
+        fillColor: item.close >= item.open ? '#089981' : '#f23645'
+    }));
+    
+    // Update chart series
+    window.mainChart.updateSeries([{
+        name: `BTC/USDT (Custom Range)`,
+        data: candleData
+    }, {
+        name: 'Volume',
+        data: volumeData
+    }]);
+    
+    // Update x-axis with custom range formatting
+    window.mainChart.updateOptions({
+        xaxis: {
+            type: 'datetime',
+            min: startTime,
+            max: endTime,
+            labels: {
+                datetimeUTC: false,
+                style: { colors: '#787b86', fontSize: '11px' },
+                datetimeFormatter: {
+                    year: 'yyyy',
+                    month: "MMM 'yy",
+                    day: 'dd MMM',
+                    hour: 'HH:mm',
+                    minute: 'HH:mm'
+                }
+            },
+            axisBorder: { color: '#2a2e39' },
+            axisTicks: { color: '#2a2e39' },
+            crosshairs: {
+                show: true,
+                stroke: { color: '#505050', width: 1, dashArray: 3 }
+            }
+        },
+        title: {
+            text: `BTC/USDT - Custom Range: ${new Date(startTime).toLocaleDateString()} to ${new Date(endTime).toLocaleDateString()}`,
+            style: {
+                fontSize: '14px',
+                fontWeight: 'bold',
+                color: '#d1d4dc'
+            }
+        }
+    });
+    
+    // Update current price display
+    const latestData = validData[validData.length - 1];
+    if (latestData) {
+        updateCurrentPrice(latestData.close);
+    }
 }
 
 async function fetchData(url) {
@@ -294,203 +473,411 @@ async function fetchData(url) {
     }
 }
 
-async function initializeCharts() {
-    console.log('Starting initializeCharts');
-    try {
-        const response = await fetchData('/api/ohlcv');
-        console.log('Fetched response:', response);
-            
-            if (!response || response.error || !response.data || !Array.isArray(response.data) || response.data.length === 0) {
-                console.warn('No OHLCV data available or invalid format');
-                return;
-            }
+// Global state for dynamic loading
+let oldestTimestamp = null;
+let isLoadingHistory = false;
+let timeframeData = {}; // Store data per timeframe
+let currentTimeframe = '1m'; // Track current timeframe
 
-            const ohlcvData = response.data;
-        console.log('OHLCV data length:', ohlcvData.length);
+async function initializeCharts() {
+    console.log('Initializing empty chart - data will load on demand');
+    try {
+        // Set initial timeframe
+        currentTimeframe = '1m';
+
+        // Initialize empty timeframe data
+        timeframeData = {};
 
         const container = document.getElementById('mainChart');
         console.log('Container found:', container);
-            
-            // Safely destroy existing chart
-            if (window.mainChart && typeof window.mainChart.destroy === 'function') {
-                try {
-                    window.mainChart.destroy();
-                } catch (error) {
-                    console.warn('Error destroying chart:', error);
-                    window.mainChart = null;
-                }
-            } else if (window.mainChart) {
-                console.warn('window.mainChart exists but destroy is not a function, resetting');
-                window.mainChart = null;
-            }
 
-            // Verify ApexCharts is loaded
-            if (typeof ApexCharts === 'undefined') {
-                console.error('ApexCharts is not loaded');
+        // Verify ApexCharts is loaded
+        if (typeof ApexCharts === 'undefined') {
+            console.error('ApexCharts is not loaded');
+            return;
+        }
+
+        // ApexCharts options with empty data initially
+        const options = {
+            series: [{
+                name: 'BTC/USDT',
+                type: 'candlestick',
+                data: [] // Start with empty data
+            }, {
+                name: 'Volume',
+                type: 'bar',
+                data: [] // Start with empty data
+            }],
+            chart: {
+                type: 'candlestick',
+                height: 500,
+                background: '#0a0a0a',
+                id: 'mainChart',
+                events: {
+                    // Dynamic Loading Event - only load when user interacts
+                    zoomed: function(chartContext, { xaxis }) {
+                        if (xaxis.min < timeframeData[currentTimeframe]?.oldestTimestamp + 60000 * 100 && !isLoadingHistory) {
+                            loadHistoricalData(chartContext);
+                        }
+                    },
+                    scrolled: function(chartContext, { xaxis }) {
+                        if (xaxis.min < timeframeData[currentTimeframe]?.oldestTimestamp + 60000 * 100 && !isLoadingHistory) {
+                            loadHistoricalData(chartContext);
+                        }
+                    }
+                },
+                toolbar: {
+                    show: true,
+                    tools: {
+                        download: true,
+                        selection: true,
+                        zoom: true,
+                        zoomin: true,
+                        zoomout: true,
+                        pan: true,
+                        reset: true
+                    },
+                    autoSelected: 'zoom'
+                },
+                animations: {
+                    enabled: true,
+                    speed: 500
+                },
+                zoom: {
+                    enabled: true,
+                    type: 'xy',
+                    autoScaleYaxis: true
+                }
+            },
+            title: {
+                text: 'BTC/USDT - Click timeframe button or select custom range to load data',
+                align: 'left',
+                style: {
+                    fontSize: '16px',
+                    fontWeight: 'bold',
+                    color: '#d1d4dc'
+                }
+            },
+            noData: {
+                text: 'Click a timeframe button to load data',
+                align: 'center',
+                verticalAlign: 'middle',
+                style: {
+                    color: '#787b86',
+                    fontSize: '18px'
+                }
+            },
+            xaxis: {
+                type: 'datetime',
+                labels: {
+                    datetimeUTC: false,
+                    style: {
+                        colors: '#787b86',
+                        fontSize: '11px'
+                    },
+                    datetimeFormatter: {
+                        year: 'yyyy',
+                        month: "MMM 'yy",
+                        day: 'dd MMM',
+                        hour: 'HH:mm'
+                    }
+                },
+                axisBorder: {
+                    color: '#2a2e39'
+                },
+                axisTicks: {
+                    color: '#2a2e39'
+                },
+                crosshairs: {
+                    show: true,
+                    stroke: {
+                        color: '#505050',
+                        width: 1,
+                        dashArray: 3
+                    }
+                }
+            },
+            yaxis: [{
+                seriesName: 'BTC/USDT',
+                labels: {
+                    style: {
+                        colors: '#787b86',
+                        fontSize: '11px'
+                    },
+                    formatter: function(val) {
+                        return '$' + val.toLocaleString('en-US', {
+                            minimumFractionDigits: 0,
+                            maximumFractionDigits: 0
+                        });
+                    },
+                    offsetX: -10
+                },
+                opposite: true,
+                tooltip: {
+                    enabled: true
+                },
+                crosshairs: {
+                    show: true,
+                    stroke: {
+                        color: '#505050',
+                        width: 1,
+                        dashArray: 3
+                    }
+                }
+            }, {
+                seriesName: 'Volume',
+                opposite: false,
+                show: false
+            }],
+            plotOptions: {
+                candlestick: {
+                    colors: {
+                        upward: '#089981',
+                        downward: '#f23645'
+                    },
+                    wick: {
+                        useFillColor: true
+                    }
+                },
+                bar: {
+                    columnWidth: '80%'
+                }
+            },
+            tooltip: {
+                enabled: true,
+                shared: true,
+                theme: 'dark',
+                custom: function({ seriesIndex, dataPointIndex, w }) {
+                    if (!w.config.series[0].data[dataPointIndex]) return 'No data loaded';
+                    const candle = w.config.series[0].data[dataPointIndex];
+                    const volume = w.config.series[1].data[dataPointIndex];
+                    const o = candle.y[0];
+                    const h = candle.y[1];
+                    const l = candle.y[2];
+                    const c = candle.y[3];
+                    const change = ((c - o) / o * 100).toFixed(2);
+                    const changeColor = c >= o ? '#089981' : '#f23645';
+                    const date = new Date(candle.x).toLocaleString();
+
+                    return `
+                        <div style="background: #1a1a2e; border: 1px solid #2a2e39; border-radius: 4px; padding: 10px; font-size: 12px;">
+                            <div style="color: #787b86; margin-bottom: 6px;">${date}</div>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+                                <span style="color: #787b86;">O:</span><span style="color: #d1d4dc;">$${o.toLocaleString()}</span>
+                                <span style="color: #787b86;">H:</span><span style="color: #089981;">$${h.toLocaleString()}</span>
+                                <span style="color: #787b86;">L:</span><span style="color: #f23645;">$${l.toLocaleString()}</span>
+                                <span style="color: #787b86;">C:</span><span style="color: #d1d4dc;">$${c.toLocaleString()}</span>
+                            </div>
+                            <div style="margin-top: 6px; padding-top: 6px; border-top: 1px solid #2a2e39;">
+                                <span style="color: #787b86;">Change:</span>
+                                <span style="color: ${changeColor};">${change >= 0 ? '+' : ''}${change}%</span>
+                            </div>
+                            <div style="color: #787b86; margin-top: 4px;">
+                                Vol: ${volume.y.toLocaleString()}
+                            </div>
+                        </div>
+                    `;
+                }
+            },
+            grid: {
+                borderColor: '#2a2e39',
+                strokeDashArray: 3,
+                xaxis: {
+                    lines: {
+                        show: false
+                    }
+                },
+                yaxis: {
+                    lines: {
+                        show: true
+                    }
+                }
+            },
+            legend: {
+                show: false
+            },
+            stroke: {
+                width: [1, 0]
+            }
+        };
+
+        // Create the chart with empty data
+        window.mainChart = new ApexCharts(container, options);
+        window.mainChart.render();
+        console.log('Empty chart initialized successfully - waiting for user interaction');
+
+        // Make responsive
+        const resizeChart = () => {
+            if (window.mainChart && container.offsetWidth > 0) {
+                window.mainChart.updateOptions({
+                    chart: {
+                        width: container.offsetWidth,
+                        height: 500
+                    }
+                });
+            }
+        };
+        window.addEventListener('resize', resizeChart);
+        setTimeout(resizeChart, 100);
+
+    } catch (error) {
+        console.error('Error initializing empty chart:', error);
+    }
+}
+
+async function loadHistoricalData(chartContext) {
+    if (isLoadingHistory || !timeframeData[currentTimeframe]) return;
+    
+    isLoadingHistory = true;
+    showToast('Loading historical data...', 'info');
+    
+    try {
+        const currentData = timeframeData[currentTimeframe];
+        const oldestTime = currentData.oldestTimestamp;
+        
+        // Calculate how much historical data to load (based on current visible range)
+        const chartRange = chartContext.w.config.xaxis.range;
+        let loadRange;
+        
+        if (chartRange && chartRange.max && chartRange.min) {
+            // Load data for 2x the current visible range before the oldest point
+            const visibleRange = chartRange.max - chartRange.min;
+            loadRange = visibleRange * 2;
+        } else {
+            // Fallback: load 500 candles worth
+            const multiplier = {
+                '1m': 1, '5m': 5, '15m': 15, '30m': 30,
+                '1h': 60, '4h': 240, '1d': 1440
+            };
+            loadRange = 500 * multiplier[currentTimeframe] * 60 * 1000; // in milliseconds
+        }
+        
+        const newStartTime = oldestTime - loadRange;
+        const interval = currentTimeframe === 'custom' ? '1m' : currentTimeframe;
+        
+        // Fetch historical data for the specific range
+        const response = await fetchData(`/api/ohlcv?start=${newStartTime}&end=${oldestTime}&interval=${interval}`);
+        
+        if (response && response.data && response.data.length > 0) {
+            const newHistory = response.data;
+            
+            // Filter out any overlaps with existing data
+            const existingTimestamps = new Set(currentData.data.map(item => new Date(item.timestamp).getTime()));
+            const uniqueHistory = newHistory.filter(item => 
+                !existingTimestamps.has(new Date(item.timestamp).getTime()) &&
+                new Date(item.timestamp).getTime() < oldestTime
+            );
+            
+            if (uniqueHistory.length === 0) {
+                isLoadingHistory = false;
                 return;
             }
-
-            let validData = [];
-            try {
-                console.log('Creating chart');
-                // Format data for ApexCharts
-                validData = ohlcvData.filter(item => item.timestamp && !isNaN(new Date(item.timestamp).getTime()) && typeof item.close === 'number');
-                const formattedData = validData.map(item => ({
-                    x: new Date(item.timestamp),
-                    y: [item.open, item.high, item.low, item.close]
-                }));
-
-                // ApexCharts options
-                const options = {
-                    series: [{
-                        name: 'candle',
-                        type: 'candlestick',
-                        data: formattedData
-                    }],
-                    chart: {
-                        type: 'candlestick',
-                        height: 400,
-                        background: '#0a0a0a'
-                    },
-                    title: {
-                        text: 'BTC/USDT Candlestick Chart',
-                        align: 'left',
-                        style: {
-                            color: '#d1d4dc'
-                        }
-                    },
-                    xaxis: {
-                        type: 'datetime',
-                        labels: {
-                            style: {
-                                colors: '#d1d4dc'
-                            }
-                        }
-                    },
-                    yaxis: {
-                        labels: {
-                            style: {
-                                colors: '#d1d4dc'
-                            }
-                        }
-                    },
-                    plotOptions: {
-                        candlestick: {
-                            colors: {
-                                upward: '#089981',
-                                downward: '#f23645'
-                            }
-                        }
-                    },
-                    tooltip: {
-                        theme: 'dark'
-                    },
-                    grid: {
-                        borderColor: '#2a2e39'
-                    }
-                };
-
-                // Create the chart
-                window.mainChart = new ApexCharts(container, options);
-                window.mainChart.render();
-                console.log('Chart initialized successfully');
-
-                // Make responsive
-                const resizeChart = () => {
-                    if (window.mainChart && container.offsetWidth > 0) {
-                        window.mainChart.updateOptions({
-                            chart: {
-                                width: container.offsetWidth,
-                                height: 400
-                            }
-                        });
-                    }
-                };
-                window.addEventListener('resize', resizeChart);
-                // Initial resize
-                setTimeout(resizeChart, 100);
-
-            } catch (error) {
-                console.error('Error creating chart:', error);
-            }
-
-            // Update current price display
-            const latestData = validData[validData.length - 1];
-            if (latestData) {
-                updateCurrentPrice(latestData.close);
-            }
-
-            // ApexCharts has built-in zoom
-
-        } catch (error) {
-            console.error('Error initializing charts:', error);
+            
+            // Update timeframe data
+            currentData.data.unshift(...uniqueHistory);
+            currentData.oldestTimestamp = newStartTime;
+            
+            // Format for ApexCharts
+            const newCandles = uniqueHistory.map(item => ({
+                x: new Date(item.timestamp).getTime(),
+                y: [item.open, item.high, item.low, item.close]
+            }));
+            
+            const newVolume = uniqueHistory.map(item => ({
+                x: new Date(item.timestamp).getTime(),
+                y: item.volume,
+                fillColor: item.close >= item.open ? '#089981' : '#f23645'
+            }));
+            
+            // Get current series and prepend new data
+            const currentSeries = chartContext.w.config.series;
+            const currentCandles = currentSeries[0].data;
+            const currentVolume = currentSeries[1].data;
+            
+            const updatedCandles = [...newCandles, ...currentCandles];
+            const updatedVolume = [...newVolume, ...currentVolume];
+            
+            // Update chart
+            chartContext.updateSeries([{
+                data: updatedCandles
+            }, {
+                data: updatedVolume
+            }]);
+            
+            showToast(`Loaded ${uniqueHistory.length} historical ${currentTimeframe === 'custom' ? '1m' : currentTimeframe} candles`, 'success');
         }
+    } catch (error) {
+        console.error('Error loading history:', error);
+        showToast('Failed to load historical data', 'error');
+    } finally {
+        isLoadingHistory = false;
     }
+}
 
-    function addZoomControls() {
-        const chartContainer = document.querySelector('.chart-container');
-        if (!chartContainer || document.querySelector('.zoom-controls')) return;
+function addZoomControls() {
+    const chartContainer = document.querySelector('.chart-container');
+    if (!chartContainer || document.querySelector('.zoom-controls')) return;
 
-        // Create zoom control buttons
-        const zoomControls = document.createElement('div');
-        zoomControls.className = 'zoom-controls';
-        zoomControls.innerHTML = `
-            <button class="zoom-btn" id="zoomIn" title="Zoom In">
-                <i class="fas fa-plus"></i>
-            </button>
-            <button class="zoom-btn" id="zoomOut" title="Zoom Out">
-                <i class="fas fa-minus"></i>
-            </button>
-            <button class="zoom-btn" id="resetZoom" title="Reset Zoom">
-                <i class="fas fa-undo"></i>
-            </button>
-            <button class="zoom-btn" id="panLeft" title="Pan Left">
-                <i class="fas fa-chevron-left"></i>
-            </button>
-            <button class="zoom-btn" id="panRight" title="Pan Right">
-                <i class="fas fa-chevron-right"></i>
-            </button>
-        `;
+    // Create zoom control buttons
+    const zoomControls = document.createElement('div');
+    zoomControls.className = 'zoom-controls';
+    zoomControls.innerHTML = `
+        <button class="zoom-btn" id="zoomIn" title="Zoom In">
+            <i class="fas fa-plus"></i>
+        </button>
+        <button class="zoom-btn" id="zoomOut" title="Zoom Out">
+            <i class="fas fa-minus"></i>
+        </button>
+        <button class="zoom-btn" id="resetZoom" title="Reset Zoom">
+            <i class="fas fa-undo"></i>
+        </button>
+        <button class="zoom-btn" id="panLeft" title="Pan Left">
+            <i class="fas fa-chevron-left"></i>
+        </button>
+        <button class="zoom-btn" id="panRight" title="Pan Right">
+            <i class="fas fa-chevron-right"></i>
+        </button>
+    `;
 
-        chartContainer.appendChild(zoomControls);
+    chartContainer.appendChild(zoomControls);
 
-        // Add event listeners
-        document.getElementById('zoomIn').addEventListener('click', () => {
-            if (window.mainChart && typeof window.mainChart.zoom === 'function') {
-                window.mainChart.zoom(1.2);
-            }
-        });
+    // Add event listeners
+    document.getElementById('zoomIn').addEventListener('click', () => {
+        if (window.mainChart && typeof window.mainChart.zoom === 'function') {
+            window.mainChart.zoom(1.2);
+        }
+    });
 
-        document.getElementById('zoomOut').addEventListener('click', () => {
-            if (window.mainChart && typeof window.mainChart.zoom === 'function') {
-                window.mainChart.zoom(0.8);
-            }
-        });
+    document.getElementById('zoomOut').addEventListener('click', () => {
+        if (window.mainChart && typeof window.mainChart.zoom === 'function') {
+            window.mainChart.zoom(0.8);
+        }
+    });
 
-        document.getElementById('resetZoom').addEventListener('click', () => {
-            if (window.mainChart && typeof window.mainChart.resetZoom === 'function') {
-                window.mainChart.resetZoom();
-            }
-        });
+    document.getElementById('resetZoom').addEventListener('click', () => {
+        if (window.mainChart && typeof window.mainChart.resetZoom === 'function') {
+            window.mainChart.resetZoom();
+        }
+    });
 
-        document.getElementById('panLeft').addEventListener('click', () => {
-            if (window.mainChart && typeof window.mainChart.pan === 'function') {
-                const xScale = window.mainChart.scales.x;
-                const range = xScale.max - xScale.min;
-                const panAmount = range * 0.1;
-                window.mainChart.pan({x: -panAmount}, undefined, 'default');
-            }
-        });
+    document.getElementById('panLeft').addEventListener('click', () => {
+        if (window.mainChart && typeof window.mainChart.pan === 'function') {
+            const xScale = window.mainChart.scales.x;
+            const range = xScale.max - xScale.min;
+            const panAmount = range * 0.1;
+            window.mainChart.pan({x: -panAmount}, undefined, 'default');
+        }
+    });
 
-        document.getElementById('panRight').addEventListener('click', () => {
-            if (window.mainChart && typeof window.mainChart.pan === 'function') {
-                const xScale = window.mainChart.scales.x;
-                const range = xScale.max - xScale.min;
-                const panAmount = range * 0.1;
-                window.mainChart.pan({x: panAmount}, undefined, 'default');
-            }
-        });
-    }
+    document.getElementById('panRight').addEventListener('click', () => {
+        if (window.mainChart && typeof window.mainChart.pan === 'function') {
+            const xScale = window.mainChart.scales.x;
+            const range = xScale.max - xScale.min;
+            const panAmount = range * 0.1;
+            window.mainChart.pan({x: panAmount}, undefined, 'default');
+        }
+    });
+}
 
 function updateCurrentPrice(price) {
     if (!price || isNaN(price)) return;
@@ -517,6 +904,12 @@ function initializeAccuracyChart() {
     const ctx = document.getElementById('accuracyChart');
     if (!ctx) return;
 
+    // Check if Chart.js is available
+    if (typeof Chart === 'undefined') {
+        console.warn('Chart.js not loaded, skipping accuracy chart');
+        return;
+    }
+
     // Generate sample accuracy data over time
     const labels = [];
     const accuracyData = [];
@@ -535,122 +928,128 @@ function initializeAccuracyChart() {
         baselineData.push(70);
     }
 
-    window.accuracyChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: 'SOFARE Accuracy',
-                    data: accuracyData,
-                    borderColor: 'rgba(0, 212, 170, 1)',
-                    backgroundColor: 'rgba(0, 212, 170, 0.1)',
-                    borderWidth: 3,
-                    fill: true,
-                    tension: 0.4,
-                    pointRadius: 0,
-                    pointHoverRadius: 4,
-                    pointBackgroundColor: 'rgba(0, 212, 170, 1)',
-                    pointBorderColor: '#fff',
-                    pointBorderWidth: 2
-                },
-                {
-                    label: 'Baseline',
-                    data: baselineData,
-                    borderColor: 'rgba(128, 128, 128, 1)',
-                    backgroundColor: 'transparent',
-                    borderWidth: 2,
-                    borderDash: [5, 5],
-                    fill: false,
-                    tension: 0.1,
-                    pointRadius: 0
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: {
-                mode: 'index',
-                intersect: false
+    try {
+        window.accuracyChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'SOFARE Accuracy',
+                        data: accuracyData,
+                        borderColor: 'rgba(0, 212, 170, 1)',
+                        backgroundColor: 'rgba(0, 212, 170, 0.1)',
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        pointHoverRadius: 4,
+                        pointBackgroundColor: 'rgba(0, 212, 170, 1)',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2
+                    },
+                    {
+                        label: 'Baseline',
+                        data: baselineData,
+                        borderColor: 'rgba(128, 128, 128, 1)',
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 0
+                    }
+                ]
             },
-            plugins: {
-                legend: {
-                    display: true,
-                    position: 'bottom',
-                    labels: {
-                        usePointStyle: true,
-                        padding: 20,
-                        color: '#ccc'
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 20,
+                            color: '#ccc'
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(26, 26, 26, 0.95)',
+                        titleColor: '#fff',
+                        bodyColor: '#ccc',
+                        borderColor: 'rgba(0, 212, 170, 0.3)',
+                        borderWidth: 1,
+                        cornerRadius: 8,
+                        callbacks: {
+                            title: function(context) {
+                                return context[0].label;
+                            },
+                            label: function(context) {
+                                return `${context.dataset.label}: ${context.parsed.y.toFixed(1)}%`;
+                            }
+                        }
                     }
                 },
-                tooltip: {
-                    backgroundColor: 'rgba(26, 26, 26, 0.95)',
-                    titleColor: '#fff',
-                    bodyColor: '#ccc',
-                    borderColor: 'rgba(0, 212, 170, 0.3)',
-                    borderWidth: 1,
-                    cornerRadius: 8,
-                    callbacks: {
-                        title: function(context) {
-                            return context[0].label;
+                scales: {
+                    x: {
+                        type: 'category',
+                        grid: {
+                            color: 'rgba(64, 64, 64, 0.3)',
+                            borderColor: 'rgba(64, 64, 64, 0.5)'
                         },
-                        label: function(context) {
-                            return `${context.dataset.label}: ${context.parsed.y.toFixed(1)}%`;
+                        ticks: {
+                            color: '#ccc',
+                            maxTicksLimit: 7
                         }
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    grid: {
-                        color: 'rgba(64, 64, 64, 0.3)',
-                        borderColor: 'rgba(64, 64, 64, 0.5)'
                     },
-                    ticks: {
-                        color: '#ccc',
-                        maxTicksLimit: 7
+                    y: {
+                        min: 60,
+                        max: 90,
+                        grid: {
+                            color: 'rgba(64, 64, 64, 0.3)',
+                            borderColor: 'rgba(64, 64, 64, 0.5)'
+                        },
+                        ticks: {
+                            color: '#ccc',
+                            callback: function(value) {
+                                return value + '%';
+                            }
+                        }
                     }
                 },
-                y: {
-                    min: 60,
-                    max: 90,
-                    grid: {
-                        color: 'rgba(64, 64, 64, 0.3)',
-                        borderColor: 'rgba(64, 64, 64, 0.5)'
-                    },
-                    ticks: {
-                        color: '#ccc',
-                        callback: function(value) {
-                            return value + '%';
-                        }
+                elements: {
+                    point: {
+                        hoverBorderWidth: 3
                     }
+                },
+                animation: {
+                    duration: 1000,
+                    easing: 'easeInOutQuart'
                 }
-            },
-            elements: {
-                point: {
-                    hoverBorderWidth: 3
-                }
-            },
-            animation: {
-                duration: 1000,
-                easing: 'easeInOutQuart'
             }
-        }
-    });
+        });
+    } catch (error) {
+        console.error('Error creating accuracy chart:', error);
+    }
 }
 
 function updateChartData() {
-    if (!window.priceChart) return;
+    if (!window.mainChart || !timeframeData[currentTimeframe]) return;
 
-    // Fetch latest OHLCV data
-    fetch('/api/ohlcv?limit=10')
-        .then(response => response.json())
+    // Fetch latest OHLCV data for current timeframe
+    const lastTimestamp = timeframeData[currentTimeframe].newestTimestamp;
+    const interval = currentTimeframe === 'custom' ? '1m' : currentTimeframe;
+    const response = fetchData(`/api/ohlcv?start=${lastTimestamp}&interval=${interval}`)
         .then(result => {
             if (result.error || !result.data || result.data.length === 0) return;
 
             const newData = result.data.map(item => ({
-                x: new Date(item.timestamp),
+                x: new Date(item.timestamp).getTime(),
                 o: item.open,
                 h: item.high,
                 l: item.low,
@@ -658,27 +1057,49 @@ function updateChartData() {
                 v: item.volume
             }));
 
-            // Get the latest timestamp from current chart
-            const currentData = window.priceChart.data.datasets[0].data;
-            const lastTimestamp = currentData.length > 0 ? currentData[currentData.length - 1].x : 0;
-
             // Filter new data that's after the last timestamp
             const filteredNewData = newData.filter(item => item.x > lastTimestamp);
 
             if (filteredNewData.length > 0) {
-                // Add new data points to both datasets
-                window.priceChart.data.datasets[0].data.push(...filteredNewData);
-                window.priceChart.data.datasets[1].data.push(...filteredNewData.map(d => ({ x: d.x, y: d.v })));
+                // Update timeframe data
+                timeframeData[currentTimeframe].data.push(...result.data.filter(item => 
+                    new Date(item.timestamp).getTime() > lastTimestamp
+                ));
+                timeframeData[currentTimeframe].newestTimestamp = Math.max(
+                    ...filteredNewData.map(item => item.x.getTime())
+                );
 
-                // Keep only last 200 data points
-                if (window.priceChart.data.datasets[0].data.length > 200) {
-                    const excess = window.priceChart.data.datasets[0].data.length - 200;
-                    window.priceChart.data.datasets[0].data.splice(0, excess);
-                    window.priceChart.data.datasets[1].data.splice(0, excess);
+                // Add new data points to chart series
+                const newCandles = filteredNewData.map(d => ({
+                    x: d.x.getTime(),
+                    y: [d.o, d.h, d.l, d.c]
+                }));
+                
+                const newVolume = filteredNewData.map(d => ({
+                    x: d.x.getTime(),
+                    y: d.v,
+                    fillColor: d.c >= d.o ? '#089981' : '#f23645'
+                }));
+
+                // Get current series and append new data
+                const currentSeries = window.mainChart.w.config.series;
+                const updatedCandles = [...currentSeries[0].data, ...newCandles];
+                const updatedVolume = [...currentSeries[1].data, ...newVolume];
+
+                // Keep only last 1000 data points to prevent memory issues
+                if (updatedCandles.length > 1000) {
+                    const excess = updatedCandles.length - 1000;
+                    updatedCandles.splice(0, excess);
+                    updatedVolume.splice(0, excess);
+                    timeframeData[currentTimeframe].oldestTimestamp = updatedCandles[0].x;
                 }
 
                 // Update chart without animation for real-time feel
-                window.priceChart.update('none');
+                window.mainChart.updateSeries([{
+                    data: updatedCandles
+                }, {
+                    data: updatedVolume
+                }], false);
 
                 // Update current price
                 const latestData = filteredNewData[filteredNewData.length - 1];
@@ -770,17 +1191,17 @@ function initializePredictionChart() {
         type: 'candlestick',
         data: {
             datasets: [{
-                label: 'Candlestick Data',
+                label: 'Historical Data',
                 data: [],
-                backgroundColors: {
-                    up: 'rgba(8, 152, 129, 0.8)',
-                    down: 'rgba(242, 54, 69, 0.8)',
-                    unchanged: 'rgba(128, 128, 128, 0.8)'
+                color: {
+                    up: '#089981',
+                    down: '#f23645',
+                    unchanged: '#787b86',
                 },
-                borderColors: {
-                    up: 'rgb(8, 152, 129)',
-                    down: 'rgb(242, 54, 69)',
-                    unchanged: 'rgb(128, 128, 128)'
+                borderColor: {
+                    up: '#089981',
+                    down: '#f23645',
+                    unchanged: '#787b86',
                 },
                 borderWidth: 1
             }]
@@ -788,57 +1209,76 @@ function initializePredictionChart() {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            scales: {
-                x: {
-                    type: 'timeseries',
-                    time: {
-                        unit: 'minute',
-                        displayFormats: {
-                            minute: 'HH:mm',
-                            hour: 'MMM dd HH:mm'
-                        }
-                    },
-                    ticks: {
-                        maxRotation: 0,
-                        autoSkip: true,
-                        autoSkipPadding: 50
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    labels: {
+                        color: '#d1d4dc'
                     }
                 },
-                y: {
-                    type: 'linear',
-                    position: 'right',
-                    ticks: {
-                        callback: function(value) {
-                            return '$' + value.toFixed(2);
+                tooltip: {
+                    enabled: true,
+                    mode: 'index',
+                    intersect: false,
+                    backgroundColor: 'rgba(26, 26, 26, 0.9)',
+                    titleColor: '#d1d4dc',
+                    bodyColor: '#d1d4dc',
+                    borderColor: '#2a2e39',
+                    borderWidth: 1,
+                    callbacks: {
+                        label: function(context) {
+                            const point = context.raw;
+                            if (!point) return '';
+                            return [
+                                `O: ${point.o.toFixed(2)}`,
+                                `H: ${point.h.toFixed(2)}`,
+                                `L: ${point.l.toFixed(2)}`,
+                                `C: ${point.c.toFixed(2)}`
+                            ];
                         }
                     }
                 }
             },
-            plugins: {
-                tooltip: {
-                    intersect: false,
-                    mode: 'index',
-                    callbacks: {
-                        title: function(context) {
-                            const date = new Date(context[0].parsed.x);
-                            return date.toLocaleString();
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        unit: 'minute',
+                        displayFormats: {
+                            minute: 'HH:mm'
                         },
-                        label: function(context) {
-                            const point = context.parsed;
-                            const type = point.prediction_type || 'historical';
-                            return [
-                                `Type: ${type}`,
-                                `Open: $${point.o.toFixed(2)}`,
-                                `High: $${point.h.toFixed(2)}`,
-                                `Low: $${point.l.toFixed(2)}`,
-                                `Close: $${point.c.toFixed(2)}`,
-                                `Volume: ${point.v.toLocaleString()}`
-                            ];
+                        tooltipFormat: 'MMM d, HH:mm'
+                    },
+                    grid: {
+                        color: '#2a2e39',
+                        borderColor: '#2a2e39'
+                    },
+                    ticks: {
+                        color: '#787b86',
+                        source: 'auto'
+                    },
+                    adapters: {
+                        date: {
+                            locale: 'en'
                         }
                     }
                 },
-                legend: {
-                    display: false
+                y: {
+                    position: 'right',
+                    grid: {
+                        color: '#2a2e39',
+                        borderColor: '#2a2e39'
+                    },
+                    ticks: {
+                        color: '#787b86',
+                        callback: function(value) {
+                            return '$' + value.toFixed(2);
+                        }
+                    }
                 }
             }
         }
@@ -872,37 +1312,70 @@ async function generateCandlestickPredictions() {
 
         // Prepare data for chart
         const historicalData = result.current_data.map(item => ({
-            x: new Date(item.timestamp).getTime(),
+            x: new Date(item.timestamp).valueOf(),
             o: item.open,
             h: item.high,
             l: item.low,
-            c: item.close,
-            v: item.volume,
-            prediction_type: 'historical'
+            c: item.close
         }));
 
         const predictedCandles = result.predicted_candles.map(item => ({
-            x: new Date(item.timestamp).getTime(),
+            x: new Date(item.timestamp).valueOf(),
             o: item.open,
             h: item.high,
             l: item.low,
-            c: item.close,
-            v: item.volume,
-            prediction_type: 'forecasted'
+            c: item.close
         }));
 
         // Update chart
-        predictionChart.data.datasets[0].data = [...historicalData, ...predictedCandles];
+        // We use two datasets to distinguish historical vs predicted if we want, 
+        // but chartjs-chart-financial usually expects one dataset for continuous candlestick.
+        // To visualize predictions differently, we can use a second dataset or just append.
+        // Let's use two datasets for clarity.
+        
+        predictionChart.data.datasets = [
+            {
+                label: 'Historical',
+                data: historicalData,
+                color: {
+                    up: '#089981',
+                    down: '#f23645',
+                    unchanged: '#787b86',
+                },
+                borderColor: {
+                    up: '#089981',
+                    down: '#f23645',
+                    unchanged: '#787b86',
+                },
+                borderWidth: 1
+            },
+            {
+                label: 'Predicted',
+                data: predictedCandles,
+                color: {
+                    up: '#00b4d8', // Different color for predictions (Blue-ish)
+                    down: '#0077b6',
+                    unchanged: '#90e0ef',
+                },
+                borderColor: {
+                    up: '#00b4d8',
+                    down: '#0077b6',
+                    unchanged: '#90e0ef',
+                },
+                borderWidth: 1
+            }
+        ];
+        
         predictionChart.update();
 
         // Update next candle details
         if (predictedCandles.length > 0) {
-            const next = predictedCandles[0];
-            document.getElementById('next-open').textContent = `$${next.o.toFixed(2)}`;
-            document.getElementById('next-high').textContent = `$${next.h.toFixed(2)}`;
-            document.getElementById('next-low').textContent = `$${next.l.toFixed(2)}`;
-            document.getElementById('next-close').textContent = `$${next.c.toFixed(2)}`;
-            document.getElementById('next-volume').textContent = next.v.toLocaleString();
+            const next = result.predicted_candles[0]; // Use original result for volume access
+            document.getElementById('next-open').textContent = `$${next.open.toFixed(2)}`;
+            document.getElementById('next-high').textContent = `$${next.high.toFixed(2)}`;
+            document.getElementById('next-low').textContent = `$${next.low.toFixed(2)}`;
+            document.getElementById('next-close').textContent = `$${next.close.toFixed(2)}`;
+            document.getElementById('next-volume').textContent = next.volume.toLocaleString();
         }
 
         showToast(`${forecastSteps} candlestick predictions generated successfully`, 'success');

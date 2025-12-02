@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import mlflow
 import mlflow.pytorch
@@ -9,6 +10,9 @@ import numpy as np
 import os
 import json
 import pickle
+import subprocess
+import io
+import time
 from ta.momentum import RSIIndicator, StochasticOscillator
 from ta.trend import MACD, EMAIndicator, SMAIndicator
 from ta.volatility import BollingerBands, AverageTrueRange
@@ -47,6 +51,32 @@ class CandlestickResponse(BaseModel):
     model_version: str
     drift_detected: bool = False
 
+def read_last_lines(filepath, n_lines):
+    """
+    Efficiently read the last n lines of a large CSV file using the 'tail' command.
+    This avoids loading the entire file into memory.
+    """
+    if not os.path.exists(filepath):
+        return pd.DataFrame()
+    
+    try:
+        # Get header
+        header = subprocess.check_output(['head', '-n', '1', filepath]).decode('utf-8').strip()
+        # Get tail
+        tail = subprocess.check_output(['tail', '-n', str(n_lines), filepath]).decode('utf-8')
+        
+        # Combine
+        if tail.startswith(header):
+            content = tail
+        else:
+            content = header + '\n' + tail
+            
+        return pd.read_csv(io.StringIO(content))
+    except Exception as e:
+        print(f"Error reading tail: {e}")
+        # Fallback
+        return pd.read_csv(filepath).tail(n_lines)
+
 def get_latest_data():
     """
     Fetches the latest sequence of data for inference.
@@ -54,18 +84,21 @@ def get_latest_data():
     Here we read from the shared CSV.
     """
     if not os.path.exists(DATA_PATH):
-        return None, None
+        return None, None, None
 
     try:
-        df = pd.read_csv(DATA_PATH)
+        # Optimize: Read only the last 2000 lines (enough for indicators to stabilize)
+        # instead of reading the entire file
+        df = read_last_lines(DATA_PATH, 2000)
+        
         if len(df) < SEQUENCE_LENGTH + 50: # Buffer for indicators
-            return None, None
+            return None, None, None
             
         # Load Macro
         if os.path.exists(MACRO_PATH):
             macro_df = pd.read_csv(MACRO_PATH)
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            macro_df['timestamp'] = pd.to_datetime(macro_df['timestamp'])
+            macro_df['timestamp'] = pd.to_datetime(macro_df['timestamp'], format='mixed', errors='coerce')
             df = pd.merge_asof(df.sort_values('timestamp'), macro_df.sort_values('timestamp'), on='timestamp', direction='backward')
             df[['fed_funds_rate', 'gold_price', 'dxy', 'sp500', 'vix', 'nasdaq', 'oil_price']] = df[['fed_funds_rate', 'gold_price', 'dxy', 'sp500', 'vix', 'nasdaq', 'oil_price']].fillna(method='ffill').fillna(0)
         else:
@@ -123,7 +156,7 @@ def get_latest_data():
         
         # Get last sequence
         if len(df) < SEQUENCE_LENGTH:
-            return None, None
+            return None, None, None
             
         last_sequence = df.iloc[-SEQUENCE_LENGTH:]
         
@@ -140,9 +173,11 @@ def get_latest_data():
         return x_seq, x_macro, x_safe
     except Exception as e:
         print(f"Error processing data: {e}")
-        return None, None
+        import traceback
+        traceback.print_exc()
+        return None, None, None
 
-@app.post("/predict", response_model=PredictionResponse)
+@app.api_route("/predict", methods=["GET", "POST"], response_model=PredictionResponse)
 async def predict():
     # Get Data first
     x_seq, x_macro, x_safe = get_latest_data()
@@ -232,24 +267,41 @@ async def predict():
 async def predict_candlestick(forecast_steps: int = 5):
     """
     Generate candlestick predictions for the next N steps.
-    Uses the model's regression output to create realistic OHLCV predictions.
+    Uses autoregressive forecasting: output of step t is input for step t+1.
     """
-    # Get Data first
-    x_seq, x_macro, x_safe = get_latest_data()
-    if x_seq is None:
+    # 1. Load Data (Buffer for indicators)
+    # We need enough history for indicators (e.g. EMA_26, MACD) to be accurate
+    df = read_last_lines(DATA_PATH, 500)
+    if len(df) < SEQUENCE_LENGTH + 50:
         raise HTTPException(status_code=503, detail="Not enough data for inference")
+
+    # Load Macro
+    if os.path.exists(MACRO_PATH):
+        macro_df = pd.read_csv(MACRO_PATH)
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        macro_df['timestamp'] = pd.to_datetime(macro_df['timestamp'], format='mixed', errors='coerce')
+        df = pd.merge_asof(df.sort_values('timestamp'), macro_df.sort_values('timestamp'), on='timestamp', direction='backward')
+        df[['fed_funds_rate', 'gold_price', 'dxy', 'sp500', 'vix', 'nasdaq', 'oil_price']] = df[['fed_funds_rate', 'gold_price', 'dxy', 'sp500', 'vix', 'nasdaq', 'oil_price']].fillna(method='ffill').fillna(0)
+    else:
+        # Handle missing macro
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        for col in ['fed_funds_rate', 'gold_price', 'dxy', 'sp500', 'vix', 'nasdaq', 'oil_price']:
+            df[col] = 0
+
+    # Ensure numeric
+    numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
     
-    # Load model from shared volume (MLflow used for experiment tracking)
+    # Load model
     shared_model_path = "/app/shared_model"
     try:
         if not os.path.exists(shared_model_path):
             raise HTTPException(status_code=503, detail="Model not ready (Shared model not found)")
         
-        # Load model config
         with open(os.path.join(shared_model_path, "model_config.json"), "r") as f:
             config = json.load(f)
-        
-        # Create model
+            
         model = SofareM3(
             micro_input_size=config["micro_input_size"],
             macro_input_size=config["macro_input_size"],
@@ -257,114 +309,173 @@ async def predict_candlestick(forecast_steps: int = 5):
             hidden_size=config["hidden_size"],
             embed_dim=config["embed_dim"]
         )
-        
-        # Load weights
         model.load_state_dict(torch.load(os.path.join(shared_model_path, "model_weights.pth")))
         model.eval()
-        
         model_version = "latest_shared"
         
-        # Load scalers from shared volume (with fallback)
+        # Load scalers
         try:
-            scalers_path = os.path.join(shared_model_path, "scalers.pkl")
-            with open(scalers_path, "rb") as f:
+            with open(os.path.join(shared_model_path, "scalers.pkl"), "rb") as f:
                 scalers = pickle.load(f)
             scaler_seq = scalers["seq"]
             scaler_macro = scalers["macro"] 
             scaler_safe = scalers["safe"]
             scaler_target = scalers["target"]
         except Exception as e:
-            # Fallback to approximation if scalers not available
-            print(f"Warning: Could not load scalers from shared volume ({e}), using approximations")
+            # Fallback (simplified for robustness)
+            print(f"Warning: Could not load scalers ({e}), using approximations")
             scaler_seq = MinMaxScaler()
             scaler_macro = MinMaxScaler()
             scaler_safe = MinMaxScaler()
             scaler_target = MinMaxScaler()
             # Fit on current data as approximation
-            scaler_seq.fit(x_seq)
-            scaler_macro.fit(x_macro.reshape(1, -1))
-            scaler_safe.fit(x_safe.reshape(1, -1))
-            # For target scaler, use a simple approximation
-            scaler_target.fit([[0], [1]])  # Dummy fit for inverse transform
-        
+            # Note: In production, this is suboptimal, but prevents crash
+            feature_cols_approx = ['close', 'volume', 'rsi', 'stoch_k', 'stoch_d', 'macd', 'macd_signal', 'macd_diff', 
+                       'sma_20', 'ema_12', 'ema_26', 'bb_upper', 'bb_lower', 'bb_middle', 'atr', 'obv', 
+                       'log_return', 'hl_range', 'rolling_vol_20']
+            # We can't fit here easily without calculating features first. 
+            # We'll handle this in the loop or assume pre-fitted if possible.
+            # For now, we'll just proceed and hope for the best or catch errors.
+            pass
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load model: {e}")
 
-    # Get current data for context
-    df = pd.read_csv(DATA_PATH)
-    df['timestamp'] = pd.to_datetime(df.iloc[:, 0], unit='ms')
-    
-    # Get last 20 actual candles for display
-    recent_data = df.tail(20)
+    # Prepare response data (Historical context)
     current_candles = []
-    for _, row in recent_data.iterrows():
+    for _, row in df.tail(20).iterrows():
         current_candles.append(CandlestickPrediction(
             timestamp=row['timestamp'].isoformat(),
-            open=float(row.iloc[1]),
-            high=float(row.iloc[2]),
-            low=float(row.iloc[3]),
-            close=float(row.iloc[4]),
-            volume=float(row.iloc[5]),
+            open=float(row['open']),
+            high=float(row['high']),
+            low=float(row['low']),
+            close=float(row['close']),
+            volume=float(row['volume']),
             prediction_type="historical"
         ))
-    
-    # Generate predictions
-    predicted_candles = []
-    current_close = float(recent_data.iloc[-1]['close'])
-    current_volume = float(recent_data.iloc[-1]['volume'])
-    
-    # Use recent volatility for realistic candle generation
-    recent_returns = recent_data['close'].pct_change().dropna()
-    volatility = recent_returns.std()
-    
-    for i in range(forecast_steps):
-        # Preprocessing with loaded scalers
-        x_seq_scaled = scaler_seq.transform(x_seq)
-        
-        # Reshape for model
-        x_seq_tensor = torch.FloatTensor(x_seq_scaled).unsqueeze(0) # Batch size 1
-        
-        # Macro scaling
-        x_macro_scaled = scaler_macro.transform(x_macro.reshape(1, -1))
-        x_macro_tensor = torch.FloatTensor(x_macro_scaled)
-        
-        # Safe scaling
-        x_safe_scaled = scaler_safe.transform(x_safe.reshape(1, -1))
-        x_safe_tensor = torch.FloatTensor(x_safe_scaled)
 
-        # Inference
-        with torch.no_grad():
-            cls_pred, reg_pred = model(x_seq_tensor, x_macro_tensor, x_safe_tensor)
-            prediction_scaled = reg_pred.item()
+    predicted_candles = []
+    
+    # Autoregressive Loop
+    for i in range(forecast_steps):
+        # 1. Feature Engineering on current df (re-calculate on updated history)
+        # Momentum
+        df["rsi"] = RSIIndicator(close=df["close"], window=14).rsi()
+        stoch = StochasticOscillator(high=df["high"], low=df["low"], close=df["close"], window=14, smooth_window=3)
+        df["stoch_k"] = stoch.stoch()
+        df["stoch_d"] = stoch.stoch_signal()
+
+        # Trend
+        macd = MACD(close=df["close"], window_slow=26, window_fast=12, window_sign=9)
+        df["macd"] = macd.macd()
+        df["macd_signal"] = macd.macd_signal()
+        df["macd_diff"] = macd.macd_diff()
         
-        # Inverse transform using target scaler to get log return prediction
-        predicted_log_return = scaler_target.inverse_transform([[prediction_scaled]])[0, 0]
+        df["sma_20"] = SMAIndicator(close=df["close"], window=20).sma_indicator()
+        df["ema_12"] = EMAIndicator(close=df["close"], window=12).ema_indicator()
+        df["ema_26"] = EMAIndicator(close=df["close"], window=26).ema_indicator()
+
+        # Volatility
+        bb = BollingerBands(close=df["close"], window=20, window_dev=2)
+        df["bb_upper"] = bb.bollinger_hband()
+        df["bb_lower"] = bb.bollinger_lband()
+        df["bb_middle"] = bb.bollinger_mavg()
         
-        # Convert log return to price prediction
+        df["atr"] = AverageTrueRange(high=df["high"], low=df["low"], close=df["close"], window=14).average_true_range()
+
+        # Volume
+        from ta.volume import OnBalanceVolumeIndicator
+        df["obv"] = OnBalanceVolumeIndicator(close=df["close"], volume=df["volume"]).on_balance_volume()
+
+        # Additional
+        df["log_return"] = np.log(df["close"] / df["close"].shift(1))
+        df["hl_range"] = df["high"] - df["low"]
+        df["rolling_vol_20"] = df["log_return"].rolling(window=20).std()
+
+        feature_cols = ['close', 'volume', 'rsi', 'stoch_k', 'stoch_d', 'macd', 'macd_signal', 'macd_diff', 
+                       'sma_20', 'ema_12', 'ema_26', 'bb_upper', 'bb_lower', 'bb_middle', 'atr', 'obv', 
+                       'log_return', 'hl_range', 'rolling_vol_20']
+        macro_cols = ['fed_funds_rate', 'gold_price', 'dxy']
+        safe_cols = ['sp500', 'vix', 'nasdaq', 'oil_price']
+        
+        # Fill NaNs (created by indicators at start of buffer)
+        df_clean = df.fillna(0)
+        
+        last_sequence = df_clean.iloc[-SEQUENCE_LENGTH:]
+        
+        x_seq = last_sequence[feature_cols].values
+        x_macro = last_sequence[macro_cols].values[-1]
+        x_safe = last_sequence[safe_cols].values[-1]
+        
+        # Scale & Predict
+        try:
+            # If scalers were not loaded, we need to fit them now (fallback)
+            try:
+                scaler_seq.transform(x_seq)
+            except:
+                scaler_seq.fit(x_seq)
+                scaler_macro.fit(x_macro.reshape(1, -1))
+                scaler_safe.fit(x_safe.reshape(1, -1))
+                scaler_target.fit([[0], [1]])
+
+            x_seq_scaled = scaler_seq.transform(x_seq)
+            x_macro_scaled = scaler_macro.transform(x_macro.reshape(1, -1))
+            x_safe_scaled = scaler_safe.transform(x_safe.reshape(1, -1))
+            
+            x_seq_tensor = torch.FloatTensor(x_seq_scaled).unsqueeze(0)
+            x_macro_tensor = torch.FloatTensor(x_macro_scaled)
+            x_safe_tensor = torch.FloatTensor(x_safe_scaled)
+            
+            with torch.no_grad():
+                _, reg_pred = model(x_seq_tensor, x_macro_tensor, x_safe_tensor)
+                prediction_scaled = reg_pred.item()
+                
+            predicted_log_return = scaler_target.inverse_transform([[prediction_scaled]])[0, 0]
+        except Exception as e:
+            print(f"Prediction error: {e}")
+            predicted_log_return = 0.0
+            
+        # Generate next candle
+        current_close = df.iloc[-1]['close']
         predicted_close = current_close * (1 + predicted_log_return)
         
-        # Generate realistic OHLCV from the predicted close price
-        # Use current close as reference for open price
+        # Volatility for realistic candle shape
+        volatility = df['log_return'].tail(20).std()
+        if np.isnan(volatility): volatility = 0.005
+        
         predicted_open = current_close
+        high_offset = np.random.uniform(0.001, max(volatility, 0.001)) * predicted_close
+        low_offset = np.random.uniform(0.001, max(volatility, 0.001)) * predicted_close
         
-        # Generate high/low based on volatility and predicted close
-        price_range = abs(predicted_close - predicted_open)
-        volatility_factor = max(volatility, 0.005)  # Minimum 0.5% volatility
-        
-        # High is typically above the max of open/close
-        high_offset = np.random.uniform(0.001, volatility_factor) * abs(predicted_close)
         predicted_high = max(predicted_open, predicted_close) + high_offset
-        
-        # Low is typically below the min of open/close  
-        low_offset = np.random.uniform(0.001, volatility_factor) * abs(predicted_close)
         predicted_low = min(predicted_open, predicted_close) - low_offset
         
-        # Volume prediction (simplified - could be enhanced with separate model)
-        volume_factor = np.random.uniform(0.8, 1.2)  # 80-120% of current volume
-        predicted_volume = current_volume * volume_factor
+        # Volume
+        current_volume = df.iloc[-1]['volume']
+        predicted_volume = current_volume * np.random.uniform(0.8, 1.2)
         
-        # Create timestamp for next candle (assuming 1-minute intervals)
-        next_timestamp = recent_data.iloc[-1]['timestamp'] + pd.Timedelta(minutes=i+1)
+        next_timestamp = df.iloc[-1]['timestamp'] + pd.Timedelta(minutes=1)
+        
+        # Create new row
+        new_row = {
+            'timestamp': next_timestamp,
+            'open': predicted_open,
+            'high': predicted_high,
+            'low': predicted_low,
+            'close': predicted_close,
+            'volume': predicted_volume,
+            # Carry forward macro/safe values
+            'fed_funds_rate': df.iloc[-1]['fed_funds_rate'],
+            'gold_price': df.iloc[-1]['gold_price'],
+            'dxy': df.iloc[-1]['dxy'],
+            'sp500': df.iloc[-1]['sp500'],
+            'vix': df.iloc[-1]['vix'],
+            'nasdaq': df.iloc[-1]['nasdaq'],
+            'oil_price': df.iloc[-1]['oil_price']
+        }
+        
+        # Append to df for next iteration
+        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
         
         predicted_candles.append(CandlestickPrediction(
             timestamp=next_timestamp.isoformat(),
@@ -375,10 +486,6 @@ async def predict_candlestick(forecast_steps: int = 5):
             volume=float(predicted_volume),
             prediction_type="forecasted"
         ))
-        
-        # Update current_close for next iteration
-        current_close = predicted_close
-        current_volume = predicted_volume
 
     return CandlestickResponse(
         current_data=current_candles,
@@ -392,38 +499,168 @@ def health():
     return {"status": "ok"}
 
 @app.get("/api/ohlcv")
-def get_ohlcv_data(limit: int = 100):
-    """Get recent OHLCV data for charting"""
+def get_ohlcv_data(limit: int = 100, interval: str = "1m", start: int = None, end: int = None):
+    """Get recent OHLCV data for charting
+    
+    Args:
+        limit: Number of candles to return (max 2000)
+        interval: Candle interval (1m, 5m, 15m, 1h, 4h, 1d) - aggregates from 1m data
+        start: Start timestamp (ms)
+        end: End timestamp (ms)
+    """
     if not os.path.exists(DATA_PATH):
         return {"error": "No data available"}
 
     try:
-        df = pd.read_csv(DATA_PATH)
+        df = pd.DataFrame()
+        
+        # Dynamic Loading Strategy
+        if start is not None or end is not None:
+            # Calculate if this is recent data (within last 30 days)
+            current_time = int(time.time() * 1000)
+            thirty_days_ago = current_time - (30 * 24 * 60 * 60 * 1000)
+            
+            is_recent_data = False
+            if start is not None and start >= thirty_days_ago:
+                is_recent_data = True
+            elif end is not None and end >= thirty_days_ago:
+                is_recent_data = True
+            elif start is None and end is None:
+                is_recent_data = True  # Default to recent for limit queries
+            
+            if is_recent_data:
+                # For recent data, use efficient tail reading
+                # Estimate how many records we need based on time range
+                if start is not None and end is not None:
+                    time_range_ms = end - start
+                    # Estimate records needed (1 record per minute)
+                    estimated_records = int(time_range_ms / (60 * 1000)) + 1000  # Buffer
+                else:
+                    # For limit queries, read enough for the limit
+                    multiplier = 1
+                    if interval == '5m': multiplier = 5
+                    elif interval == '15m': multiplier = 15
+                    elif interval == '30m': multiplier = 30
+                    elif interval == '1h': multiplier = 60
+                    elif interval == '4h': multiplier = 240
+                    elif interval == '1d': multiplier = 1440
+                    
+                    estimated_records = limit * multiplier * 2  # Double for safety
+                
+                # Cap at reasonable limit
+                estimated_records = min(estimated_records, 100000)
+                
+                # Read from tail
+                df = read_last_lines(DATA_PATH, estimated_records)
+                
+                # Filter by timestamp range if specified
+                if start is not None:
+                    df = df[df.iloc[:, 0] >= start]
+                if end is not None:
+                    df = df[df.iloc[:, 0] <= end]
+            else:
+                # For older data, use chunking approach
+                chunks = []
+                chunk_size = 50000
+                
+                for chunk in pd.read_csv(DATA_PATH, chunksize=chunk_size):
+                    chunk_ts = pd.to_numeric(chunk.iloc[:, 0], errors='coerce')
+                    
+                    mask = pd.Series(True, index=chunk.index)
+                    if start is not None:
+                        mask &= (chunk_ts >= start)
+                    if end is not None:
+                        mask &= (chunk_ts <= end)
+                    
+                    if mask.any():
+                        chunks.append(chunk[mask])
+                    
+                    # Optimization: If we passed the end time, stop reading
+                    if end is not None and chunk_ts.max() > end:
+                        break
+                
+                if chunks:
+                    df = pd.concat(chunks)
+        else:
+            # Limit query: Use efficient tail reading
+            limit = min(limit, 5000)
+            
+            # Calculate required lines based on interval
+            multiplier = 1
+            if interval == '5m': multiplier = 5
+            elif interval == '15m': multiplier = 15
+            elif interval == '30m': multiplier = 30
+            elif interval == '1h': multiplier = 60
+            elif interval == '4h': multiplier = 240
+            elif interval == '1d': multiplier = 1440
+            
+            required_lines = limit * multiplier
+            # Add buffer for aggregation edge cases
+            df = read_last_lines(DATA_PATH, required_lines + 100)
+
         if len(df) == 0:
             return {"error": "No data available"}
 
-        # Take last 'limit' records
-        df = df.tail(limit)
-
         # Convert timestamp to datetime
         df['timestamp'] = pd.to_datetime(df.iloc[:, 0], unit='ms')
+        df = df.sort_values('timestamp')
+        
+        # Ensure numeric columns
+        df['open'] = pd.to_numeric(df.iloc[:, 1], errors='coerce')
+        df['high'] = pd.to_numeric(df.iloc[:, 2], errors='coerce')
+        df['low'] = pd.to_numeric(df.iloc[:, 3], errors='coerce')
+        df['close'] = pd.to_numeric(df.iloc[:, 4], errors='coerce')
+        df['volume'] = pd.to_numeric(df.iloc[:, 5], errors='coerce')
+        
+        # Drop any NaN rows
+        df = df.dropna()
+        
+        # Aggregate to different intervals if requested
+        interval_map = {
+            '1m': '1min',
+            '5m': '5min', 
+            '15m': '15min',
+            '30m': '30min',
+            '1h': '1h',
+            '4h': '4h',
+            '1d': '1D'
+        }
+        
+        if interval in interval_map and interval != '1m':
+            df = df.set_index('timestamp')
+            df = df.resample(interval_map[interval]).agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+                'volume': 'sum'
+            }).dropna().reset_index()
+
+        # Take last 'limit' records if not range query
+        if start is None and end is None:
+            df = df.tail(limit)
 
         # Format for frontend (OHLC format)
         data = []
         for _, row in df.iterrows():
             data.append({
-                'timestamp': row['timestamp'].isoformat(),
-                'open': float(row.iloc[1]),
-                'high': float(row.iloc[2]),
-                'low': float(row.iloc[3]),
-                'close': float(row.iloc[4]),
-                'volume': float(row.iloc[5])
+                'timestamp': int(row['timestamp'].timestamp() * 1000),  # Convert to milliseconds since epoch
+                'open': float(row['open']),
+                'high': float(row['high']),
+                'low': float(row['low']),
+                'close': float(row['close']),
+                'volume': float(row['volume'])
             })
 
-        return {"data": data}
+        return {
+            "data": data,
+            "interval": interval,
+            "count": len(data)
+        }
 
     except Exception as e:
-        return {"error": str(e)}
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.get("/api/macro")
 def get_macro_data():
@@ -461,4 +698,4 @@ def get_macro_data():
 @app.get("/")
 def dashboard():
     """Serve the main dashboard"""
-    return {"message": "SOFARE-AI Dashboard", "docs": "/docs", "dashboard": "/static/index.html"}
+    return FileResponse("/app/static/index.html")

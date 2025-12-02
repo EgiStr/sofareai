@@ -7,3 +7,4 @@ ta
 scipy
 torch
 transformers
+optuna>=3.0.0
