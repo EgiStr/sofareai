@@ -1,6 +1,8 @@
 services:
   ingestion:
-    build: ./ingestion
+    build:
+      context: .
+      dockerfile: ingestion/Dockerfile
     container_name: sofare_ingestion
     volumes:
       - ./ingestion/src:/app/src
@@ -13,7 +15,9 @@ services:
     restart: unless-stopped
 
   training:
-    build: ./training
+    build:
+      context: .
+      dockerfile: training/Dockerfile
     container_name: sofare_training
     volumes:
       - ./training/src:/app/src
@@ -30,7 +34,9 @@ services:
       - mlflow
 
   serving:
-    build: ./serving
+    build:
+      context: .
+      dockerfile: serving/Dockerfile
     container_name: sofare_serving
     ports:
       - "8000:8000"

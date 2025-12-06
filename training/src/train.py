@@ -14,13 +14,13 @@ import logging
 import copy
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler
 from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix, classification_report
-from features import add_technical_indicators
-from dataset import TimeSeriesDataset
-from model import SofareM3
+from sofare_common.features import add_technical_indicators
+from sofare_common.dataset import TimeSeriesDataset
+from sofare_common.model import SofareM3
 
 # Comprehensive drift detection and version management
-from drift_detector import DriftDetector, DriftSeverity, DriftType
-from version_manager import (
+from sofare_common.drift_detector import DriftDetector, DriftSeverity, DriftType
+from sofare_common.version_manager import (
     ModelVersionManager, 
     VersionBump, 
     create_release_from_mlflow,

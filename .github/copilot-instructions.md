@@ -67,6 +67,119 @@ sofareai/
 - **Charting**: ApexCharts requires millisecond timestamps, not ISO strings.
 - **WebSocket**: Real-time data ingestion with callback pattern.
 
+## Code Patterns & Examples
+
+### Multi-Task Loss Function
+```python
+def multi_task_loss(cls_pred, reg_pred, cls_target, reg_target):
+    cls_loss = F.cross_entropy(cls_pred, cls_target)
+    reg_loss = F.huber_loss(reg_pred.squeeze(), reg_target, delta=1.0)
+    total_loss = 0.5 * cls_loss + 0.5 * reg_loss  # Equal weighting
+    return total_loss, cls_loss, reg_loss
+```
+
+### Temporal Data Split (CRITICAL)
+```python
+# NEVER shuffle time-series data
+def temporal_split(data, train_ratio=0.7, val_ratio=0.15):
+    n_total = len(data)
+    n_train = int(n_total * train_ratio)
+    n_val = int(n_total * (train_ratio + val_ratio))
+
+    train_data = data[:n_train]      # Chronological first 70%
+    val_data = data[n_train:n_val]   # Next 15%
+    test_data = data[n_val:]         # Final 15% (future data)
+
+    return train_data, val_data, test_data
+```
+
+### Feature Engineering with TA Library
+```python
+from ta.momentum import RSIIndicator, StochasticOscillator
+from ta.trend import MACD, EMAIndicator, SMAIndicator
+from ta.volatility import BollingerBands, AverageTrueRange
+from ta.volume import OnBalanceVolumeIndicator
+
+def add_technical_indicators(df):
+    # RSI
+    rsi_indicator = RSIIndicator(close=df["close"], window=14)
+    df["rsi"] = rsi_indicator.rsi()
+
+    # MACD
+    macd_indicator = MACD(close=df["close"], window_slow=26, window_fast=12, window_sign=9)
+    df["macd"] = macd_indicator.macd()
+    df["macd_signal"] = macd_indicator.macd_signal()
+    df["macd_diff"] = macd_indicator.macd_diff()
+
+    # Bollinger Bands
+    bb_indicator = BollingerBands(close=df["close"], window=20, window_dev=2)
+    df["bb_upper"] = bb_indicator.bollinger_hband()
+    df["bb_lower"] = bb_indicator.bollinger_lband()
+    df["bb_middle"] = bb_indicator.bollinger_mavg()
+
+    return df
+```
+
+### Timestamp Conversion for ApexCharts
+```python
+# Convert pandas timestamp to milliseconds for ApexCharts
+def convert_to_milliseconds(timestamp_series):
+    return (timestamp_series.astype('int64') // 10**6).astype(str)
+
+# Usage in API response
+response_data = {
+    "timestamp": int(row['timestamp'].timestamp() * 1000),  # milliseconds
+    "prediction": prediction_value
+}
+```
+
+### Model Loading Pattern
+```python
+def load_model_from_registry():
+    """Load model from shared volume, not MLflow registry"""
+    model_path = "/app/shared_model/model_weights.pth"
+    config_path = "/app/shared_model/model_config.json"
+
+    # Load config
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+
+    # Initialize model
+    model = SofareM3(**config)
+
+    # Load weights
+    model.load_state_dict(torch.load(model_path))
+    model.eval()
+
+    return model
+```
+
+### Data Quality Validation
+```python
+def validate_data_quality(df):
+    """Comprehensive data validation before training"""
+    # Null value detection
+    null_counts = df.isnull().sum()
+    if null_counts.any():
+        logger.warning(f"Null values detected: {null_counts}")
+
+    # Duplicate timestamp removal
+    df = df.drop_duplicates(subset=['timestamp'], keep='last')
+
+    # Temporal ordering validation
+    df = df.sort_values('timestamp').reset_index(drop=True)
+
+    # Statistical outlier detection
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols:
+        z_scores = np.abs((df[col] - df[col].mean()) / df[col].std())
+        outliers = df[z_scores > 3]
+        if len(outliers) > 0:
+            logger.warning(f"Outliers in {col}: {len(outliers)} records")
+
+    return df
+```
+
 ## Examples
 - Add new indicator: Extend `add_technical_indicators()` in `training/src/features.py` using `ta` library.
 - New data source: Add to `MacroClient.fetch_data()` in `ingestion/src/macro_client.py`, expand to minute-level in `fetch_historical_macro()`.

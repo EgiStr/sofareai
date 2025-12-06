@@ -23,7 +23,7 @@ from hyperparameter_tuning import (
     create_default_tuning_config,
     load_best_params
 )
-from features import add_technical_indicators
+from sofare_common.features import add_technical_indicators
 
 # Setup logging
 logging.basicConfig(

@@ -30,9 +30,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from sklearn.preprocessing import MinMaxScaler
 
-from model import SofareM3
-from dataset import TimeSeriesDataset
-from features import add_technical_indicators
+from sofare_common.model import SofareM3
+from sofare_common.dataset import TimeSeriesDataset
+from sofare_common.features import add_technical_indicators
 
 logger = logging.getLogger(__name__)
 
