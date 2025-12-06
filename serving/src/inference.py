@@ -10,6 +10,7 @@ import logging
 from sklearn.preprocessing import MinMaxScaler
 from sofare_common.model import SofareM3
 from sofare_common.features import add_technical_indicators
+from sofare_common import SessionLocal, OHLCV, MacroIndicator
 
 logger = logging.getLogger(__name__)
 
@@ -78,68 +79,83 @@ class InferenceService:
             # Fit dummy to prevent errors
             self.scalers["target"].fit([[0], [1]])
 
-    def _read_last_lines(self, filepath, n_lines):
-        """Efficiently read the last n lines of a large CSV file."""
-        if not os.path.exists(filepath):
-            return pd.DataFrame()
-        
+    def _read_last_lines(self, n_lines):
+        """Read last n lines from DB."""
+        db = SessionLocal()
         try:
-            # Get header
-            header = subprocess.check_output(['head', '-n', '1', filepath]).decode('utf-8').strip()
-            # Get tail
-            tail = subprocess.check_output(['tail', '-n', str(n_lines), filepath]).decode('utf-8')
+            query = db.query(OHLCV).filter(OHLCV.symbol == 'BTCUSDT').order_by(OHLCV.timestamp.desc()).limit(n_lines)
+            records = query.all()
+            records.reverse() # Chronological
             
-            if not tail:
+            if not records:
                 return pd.DataFrame()
-
-            # Combine
-            if tail.startswith(header):
-                content = tail
-            else:
-                content = header + '\n' + tail
                 
-            return pd.read_csv(io.StringIO(content))
+            data = [{
+                'timestamp': int(r.timestamp.timestamp() * 1000),
+                'open': r.open,
+                'high': r.high,
+                'low': r.low,
+                'close': r.close,
+                'volume': r.volume
+            } for r in records]
+            
+            return pd.DataFrame(data)
         except Exception as e:
-            logger.error(f"Error reading tail: {e}")
-            # Fallback
-            return pd.read_csv(filepath).tail(n_lines)
+            logger.error(f"Error reading from DB: {e}")
+            return pd.DataFrame()
+        finally:
+            db.close()
 
     def _prepare_data(self, df_raw):
         """
         Prepares data for inference:
-        1. Merges with Macro data
-        2. Applies Feature Engineering (using shared logic)
-        3. Returns processed dataframe
+        1. Merges with Macro data from DB
+        2. Applies Feature Engineering
         """
         df = df_raw.copy()
         
-        # Load Macro
-        if os.path.exists(self.macro_path):
-            macro_df = pd.read_csv(self.macro_path)
-            
-            # Ensure timestamps are datetime
-            # OHLCV is usually ms timestamp
-            if 'timestamp' in df.columns and pd.api.types.is_numeric_dtype(df['timestamp']):
-                df['timestamp_dt'] = pd.to_datetime(df['timestamp'], unit='ms')
-            else:
-                df['timestamp_dt'] = pd.to_datetime(df['timestamp'])
-                
-            macro_df['timestamp'] = pd.to_datetime(macro_df['timestamp'], format='mixed', errors='coerce')
-            
-            # Merge
-            df = pd.merge_asof(df.sort_values('timestamp_dt'), macro_df.sort_values('timestamp'), 
-                               left_on='timestamp_dt', right_on='timestamp', direction='backward')
-            
-            # Fill macro NaNs
-            macro_cols = ['fed_funds_rate', 'gold_price', 'dxy', 'sp500', 'vix', 'nasdaq', 'oil_price']
-            for col in macro_cols:
-                if col in df.columns:
-                    df[col] = df[col].ffill().fillna(0)
+        # Ensure timestamp_dt
+        if 'timestamp' in df.columns and pd.api.types.is_numeric_dtype(df['timestamp']):
+            df['timestamp_dt'] = pd.to_datetime(df['timestamp'], unit='ms')
         else:
-            # Fill zeros if no macro data
+            df['timestamp_dt'] = pd.to_datetime(df['timestamp'])
+
+        # Load Macro from DB
+        db = SessionLocal()
+        try:
+            # Get macro data covering the range of df
+            min_ts = df['timestamp_dt'].min()
+            
+            from datetime import timedelta
+            start_ts = min_ts - timedelta(days=7)
+            
+            query = db.query(MacroIndicator).filter(MacroIndicator.timestamp >= start_ts).order_by(MacroIndicator.timestamp.asc())
+            macro_df_long = pd.read_sql(query.statement, db.bind)
+            
+            if not macro_df_long.empty:
+                macro_df = macro_df_long.pivot(index='timestamp', columns='name', values='value')
+                macro_df.reset_index(inplace=True)
+                
+                # Merge
+                df = pd.merge_asof(df.sort_values('timestamp_dt'), macro_df.sort_values('timestamp'), 
+                                   left_on='timestamp_dt', right_on='timestamp', direction='backward')
+                
+                # Fill macro NaNs
+                macro_cols = [c for c in macro_df.columns if c != 'timestamp']
+                df[macro_cols] = df[macro_cols].ffill().fillna(0)
+            else:
+                 # Fill zeros
+                macro_cols = ['fed_funds_rate', 'gold_price', 'dxy', 'sp500', 'vix', 'nasdaq', 'oil_price']
+                for col in macro_cols:
+                    df[col] = 0
+        except Exception as e:
+            logger.error(f"Error loading macro from DB: {e}")
+             # Fill zeros
             macro_cols = ['fed_funds_rate', 'gold_price', 'dxy', 'sp500', 'vix', 'nasdaq', 'oil_price']
             for col in macro_cols:
                 df[col] = 0
+        finally:
+            db.close()
 
         # Apply Feature Engineering
         # This uses the SHARED logic from src.features
@@ -158,7 +174,7 @@ class InferenceService:
         # Read enough data for indicators (buffer)
         # We need at least SEQUENCE_LENGTH + 50 (for indicators)
         buffer_size = self.sequence_length + 200 
-        df_raw = self._read_last_lines(self.data_path, buffer_size)
+        df_raw = self._read_last_lines(buffer_size)
         
         if len(df_raw) < self.sequence_length + 20:
             logger.warning("Not enough data for inference.")

@@ -11,17 +11,18 @@ import subprocess
 import io
 import logging
 from src.inference import InferenceService
+from sofare_common import SessionLocal, OHLCV
+from datetime import datetime
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
-DATA_PATH = "/app/data/ohlcv.csv"
-MACRO_PATH = "/app/data/macro.csv"
+# DATA_PATH and MACRO_PATH are deprecated in favor of DB
 
 # Global Service Instance
-inference_service = InferenceService(data_path=DATA_PATH, macro_path=MACRO_PATH)
+inference_service = InferenceService()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -66,28 +67,34 @@ class CandlestickResponse(BaseModel):
     drift_detected: bool = False
 
 # --- Utility for Data Fetching (kept for /api/ohlcv) ---
-def read_last_lines(filepath, n_lines):
+def read_last_lines(n_lines):
     """
-    Efficiently read the last n lines of a large CSV file using the 'tail' command.
+    Read last n lines from DB.
     """
-    if not os.path.exists(filepath):
-        return pd.DataFrame()
-    
+    db = SessionLocal()
     try:
-        header = subprocess.check_output(['head', '-n', '1', filepath]).decode('utf-8').strip()
-        tail = subprocess.check_output(['tail', '-n', str(n_lines), filepath]).decode('utf-8')
+        query = db.query(OHLCV).filter(OHLCV.symbol == 'BTCUSDT').order_by(OHLCV.timestamp.desc()).limit(n_lines)
+        records = query.all()
+        records.reverse()
         
-        if not tail: return pd.DataFrame()
-        
-        if tail.startswith(header):
-            content = tail
-        else:
-            content = header + '\n' + tail
+        if not records:
+            return pd.DataFrame()
             
-        return pd.read_csv(io.StringIO(content))
+        data = [{
+            'timestamp': int(r.timestamp.timestamp() * 1000),
+            'open': r.open,
+            'high': r.high,
+            'low': r.low,
+            'close': r.close,
+            'volume': r.volume
+        } for r in records]
+        
+        return pd.DataFrame(data)
     except Exception as e:
-        logger.error(f"Error reading tail: {e}")
-        return pd.read_csv(filepath).tail(n_lines)
+        logger.error(f"Error reading from DB: {e}")
+        return pd.DataFrame()
+    finally:
+        db.close()
 
 # --- Endpoints ---
 
@@ -115,7 +122,7 @@ async def predict_candlestick(forecast_steps: int = 5):
     try:
         # 1. Get Historical Context (Last 20 candles)
         # We use the utility function here for raw data display
-        df_hist = read_last_lines(DATA_PATH, 20)
+        df_hist = read_last_lines(20)
         
         current_candles = []
         if not df_hist.empty:
@@ -169,109 +176,43 @@ def health():
 @app.get("/api/ohlcv")
 def get_ohlcv_data(limit: int = 100, interval: str = "1m", start: int = None, end: int = None):
     """Get recent OHLCV data for charting"""
-    if not os.path.exists(DATA_PATH):
-        return {"error": "No data available"}
-
+    db = SessionLocal()
     try:
-        df = pd.DataFrame()
+        query = db.query(OHLCV).filter(OHLCV.symbol == 'BTCUSDT')
         
-        # Dynamic Loading Strategy
-        if start is not None or end is not None:
-            current_time = int(time.time() * 1000)
-            thirty_days_ago = current_time - (30 * 24 * 60 * 60 * 1000)
+        if start is not None:
+            start_dt = datetime.fromtimestamp(start / 1000.0)
+            query = query.filter(OHLCV.timestamp >= start_dt)
+        
+        if end is not None:
+            end_dt = datetime.fromtimestamp(end / 1000.0)
+            query = query.filter(OHLCV.timestamp <= end_dt)
             
-            is_recent_data = False
-            if start is not None and start >= thirty_days_ago:
-                is_recent_data = True
-            elif end is not None and end >= thirty_days_ago:
-                is_recent_data = True
-            elif start is None and end is None:
-                is_recent_data = True
-            
-            if is_recent_data:
-                if start is not None and end is not None:
-                    time_range_ms = end - start
-                    estimated_records = int(time_range_ms / (60 * 1000)) + 1000
-                else:
-                    multiplier = 1
-                    if interval == '5m': multiplier = 5
-                    elif interval == '15m': multiplier = 15
-                    elif interval == '30m': multiplier = 30
-                    elif interval == '1h': multiplier = 60
-                    elif interval == '4h': multiplier = 240
-                    elif interval == '1d': multiplier = 1440
-                    estimated_records = limit * multiplier * 2
-                
-                estimated_records = min(estimated_records, 100000)
-                df = read_last_lines(DATA_PATH, estimated_records)
-                
-                if start is not None:
-                    df = df[df.iloc[:, 0] >= start]
-                if end is not None:
-                    df = df[df.iloc[:, 0] <= end]
-            else:
-                chunks = []
-                chunk_size = 50000
-                for chunk in pd.read_csv(DATA_PATH, chunksize=chunk_size):
-                    chunk_ts = pd.to_numeric(chunk.iloc[:, 0], errors='coerce')
-                    mask = pd.Series(True, index=chunk.index)
-                    if start is not None: mask &= (chunk_ts >= start)
-                    if end is not None: mask &= (chunk_ts <= end)
-                    if mask.any(): chunks.append(chunk[mask])
-                    if end is not None and chunk_ts.max() > end: break
-                if chunks: df = pd.concat(chunks)
-        else:
-            limit = min(limit, 5000)
-            multiplier = 1
-            if interval == '5m': multiplier = 5
-            elif interval == '15m': multiplier = 15
-            elif interval == '30m': multiplier = 30
-            elif interval == '1h': multiplier = 60
-            elif interval == '4h': multiplier = 240
-            elif interval == '1d': multiplier = 1440
-            required_lines = limit * multiplier
-            df = read_last_lines(DATA_PATH, required_lines + 100)
-
-        if len(df) == 0:
-            return {"error": "No data available"}
-
-        df['timestamp'] = pd.to_datetime(df.iloc[:, 0], unit='ms')
-        df = df.sort_values('timestamp')
-        
-        df['open'] = pd.to_numeric(df.iloc[:, 1], errors='coerce')
-        df['high'] = pd.to_numeric(df.iloc[:, 2], errors='coerce')
-        df['low'] = pd.to_numeric(df.iloc[:, 3], errors='coerce')
-        df['close'] = pd.to_numeric(df.iloc[:, 4], errors='coerce')
-        df['volume'] = pd.to_numeric(df.iloc[:, 5], errors='coerce')
-        
-        df = df.dropna()
-        
-        interval_map = {
-            '1m': '1min', '5m': '5min', '15m': '15min',
-            '30m': '30min', '1h': '1h', '4h': '4h', '1d': '1D'
-        }
-        
-        if interval in interval_map and interval != '1m':
-            df = df.set_index('timestamp')
-            df = df.resample(interval_map[interval]).agg({
-                'open': 'first', 'high': 'max', 'low': 'min',
-                'close': 'last', 'volume': 'sum'
-            }).dropna().reset_index()
-
         if start is None and end is None:
-            df = df.tail(limit)
+             query = query.order_by(OHLCV.timestamp.desc()).limit(limit)
+        else:
+             query = query.order_by(OHLCV.timestamp.asc())
+             query = query.limit(10000)
 
+        records = query.all()
+        
+        if start is None and end is None:
+            records.reverse()
+        
+        if not records:
+            return {"error": "No data available"}
+            
         data = []
-        for _, row in df.iterrows():
+        for r in records:
             data.append({
-                'timestamp': int(row['timestamp'].timestamp() * 1000),
-                'open': float(row['open']),
-                'high': float(row['high']),
-                'low': float(row['low']),
-                'close': float(row['close']),
-                'volume': float(row['volume'])
+                'timestamp': int(r.timestamp.timestamp() * 1000),
+                'open': r.open,
+                'high': r.high,
+                'low': r.low,
+                'close': r.close,
+                'volume': r.volume
             })
-
+            
         return {"data": data, "interval": interval, "count": len(data)}
 
     except Exception as e:
@@ -281,28 +222,28 @@ def get_ohlcv_data(limit: int = 100, interval: str = "1m", start: int = None, en
 @app.get("/api/macro")
 def get_macro_data():
     """Get latest macro indicators"""
-    if not os.path.exists(MACRO_PATH):
-        return {"error": "No macro data available"}
-
+    db = SessionLocal()
     try:
-        df = pd.read_csv(MACRO_PATH)
-        if len(df) == 0:
-            return {"error": "No macro data available"}
-
-        latest = df.iloc[-1]
-        def safe_float(value):
-            if pd.isna(value) or np.isnan(value): return None
-            return float(value)
+        # Get latest timestamp
+        last_ts_record = db.query(MacroIndicator.timestamp).order_by(MacroIndicator.timestamp.desc()).first()
+        if not last_ts_record:
+             return {"error": "No macro data available"}
         
-        return {
-            "fed_funds_rate": safe_float(latest['fed_funds_rate']),
-            "gold_price": safe_float(latest['gold_price']),
-            "dxy": safe_float(latest['dxy']),
-            "sp500": safe_float(latest['sp500']),
-            "vix": safe_float(latest['vix']),
-            "nasdaq": safe_float(latest['nasdaq']),
-            "oil_price": safe_float(latest['oil_price'])
-        }
+        last_ts = last_ts_record[0]
+        
+        # Get all indicators for this timestamp
+        records = db.query(MacroIndicator).filter(MacroIndicator.timestamp == last_ts).all()
+        
+        result = {}
+        for r in records:
+            result[r.name] = r.value
+            
+        return result
+    except Exception as e:
+        logger.error(f"Error fetching macro: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()
 
     except Exception as e:
         return {"error": str(e)}

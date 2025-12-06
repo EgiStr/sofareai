@@ -17,6 +17,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score, confusion_m
 from sofare_common.features import add_technical_indicators
 from sofare_common.dataset import TimeSeriesDataset
 from sofare_common.model import SofareM3
+from sofare_common import SessionLocal, OHLCV, MacroIndicator
 
 # Comprehensive drift detection and version management
 from sofare_common.drift_detector import DriftDetector, DriftSeverity, DriftType
@@ -150,54 +151,49 @@ drift_detector = DriftDetector(
 
 def load_data():
     """
-    Load and merge OHLCV + Macro data with best practices:
-    1. Data validation and quality checks
-    2. Proper timestamp handling
-    3. Missing value imputation
-    4. Data integrity logging
+    Load and merge OHLCV + Macro data from TimescaleDB.
     """
-    if not os.path.exists(DATA_PATH):
-        logger.warning("Data file not found. Waiting...")
-        return None
-    
+    logger.info("Loading data from TimescaleDB...")
+    db = SessionLocal()
     try:
-        df = pd.read_csv(DATA_PATH)
+        # Load OHLCV
+        query = db.query(OHLCV).filter(OHLCV.symbol == 'BTCUSDT').order_by(OHLCV.timestamp.asc())
+        df = pd.read_sql(query.statement, db.bind)
         
+        if df.empty:
+            logger.warning("No OHLCV data found in DB.")
+            return None
+
         # Best Practice: Validate minimum data requirement
         if len(df) < MIN_DATA_POINTS:
             logger.warning(f"Insufficient data: {len(df)} < {MIN_DATA_POINTS} minimum required")
             return None
-        
-        # Best Practice: Log data statistics
-        logger.info(f"Loaded OHLCV data: {len(df)} records, date range: {df['timestamp'].min()} to {df['timestamp'].max()}")
-        
-        # Best Practice: Check for data quality issues
-        null_counts = df.isnull().sum()
-        if null_counts.any():
-            logger.warning(f"Found null values in OHLCV: {null_counts[null_counts > 0].to_dict()}")
             
+        logger.info(f"Loaded OHLCV data: {len(df)} records")
+
         # Load Macro Data
-        if os.path.exists(MACRO_PATH):
-            macro_df = pd.read_csv(MACRO_PATH)
-            logger.info(f"Loaded Macro data: {len(macro_df)} records")
+        macro_query = db.query(MacroIndicator).order_by(MacroIndicator.timestamp.asc())
+        macro_df_long = pd.read_sql(macro_query.statement, db.bind)
+        
+        if not macro_df_long.empty:
+            macro_df = macro_df_long.pivot(index='timestamp', columns='name', values='value')
+            macro_df.reset_index(inplace=True)
             
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            macro_df['timestamp'] = pd.to_datetime(macro_df['timestamp'], format='mixed', errors='coerce')
+            # Merge
+            df = pd.merge_asof(df, macro_df, on='timestamp', direction='backward')
             
-            # Best Practice: Log merge statistics
-            before_merge = len(df)
-            df = pd.merge_asof(df.sort_values('timestamp'), 
-                               macro_df.sort_values('timestamp'), 
-                               on='timestamp', 
-                               direction='backward')
-            logger.info(f"Merged data: {before_merge} -> {len(df)} records")
-            
-            # Best Practice: Forward fill without limit for macro data 
-            # (macro data changes daily, safe to fill for OHLCV minute data)
-            df[['fed_funds_rate', 'gold_price', 'dxy']] = df[['fed_funds_rate', 'gold_price', 'dxy']].ffill().fillna(0)
+            # Fill NA
+            macro_cols = [c for c in macro_df.columns if c != 'timestamp']
+            df[macro_cols] = df[macro_cols].ffill().fillna(0)
         else:
-            logger.warning("Macro file not found, using zeros.")
-            df['fed_funds_rate'] = 0
+            logger.warning("No Macro data found in DB.")
+            
+        return df
+    except Exception as e:
+        logger.error(f"Error loading data from DB: {e}")
+        return None
+    finally:
+        db.close()
             df['gold_price'] = 0
             df['dxy'] = 0
 

@@ -15,7 +15,11 @@ dependencies = [
     "scikit-learn",
     "ta",
     "transformers",
-    "scipy"
+    "scipy",
+    "sqlalchemy>=2.0.0",
+    "asyncpg",
+    "psycopg2-binary",
+    "pydantic"
 ]
 
 [project.optional-dependencies]

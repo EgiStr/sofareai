@@ -1,4 +1,22 @@
 services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg14
+    container_name: sofare_timescaledb
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-sofare_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sofare_password}
+      - POSTGRES_DB=${POSTGRES_DB:-sofare_db}
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sofare_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   ingestion:
     build:
       context: .
@@ -10,9 +28,14 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - DATA_SOURCE=${DATA_SOURCE:-binance}
+      # In host mode, use localhost to reach the exposed port 5432
+      - POSTGRES_HOST=localhost
     env_file: .env
     network_mode: "host"
     restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
 
   training:
     build:
@@ -30,8 +53,10 @@ services:
       - MODEL_REGISTRY_PATH=/app/shared_model/registry
       - MAX_DATA_POINTS=2000000
       - GIT_PYTHON_REFRESH=quiet
+    env_file: .env
     depends_on:
       - mlflow
+      - timescaledb
 
   serving:
     build:
@@ -46,9 +71,11 @@ services:
       - ./shared_model:/app/shared_model
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+    env_file: .env
     depends_on:
       - mlflow
       - training
+      - timescaledb
 
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.9.2
@@ -58,3 +85,6 @@ services:
     command: mlflow server --backend-store-uri file:///mlflow --default-artifact-root /mlflow/artifacts --host 0.0.0.0
     volumes:
       - ./mlflow_data:/mlflow
+
+volumes:
+  timescaledb_data:

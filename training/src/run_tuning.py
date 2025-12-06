@@ -16,6 +16,7 @@ import sys
 import logging
 import pandas as pd
 from datetime import datetime
+from sofare_common import SessionLocal, OHLCV, MacroIndicator
 
 from hyperparameter_tuning import (
     HyperparameterTuner,
@@ -39,44 +40,48 @@ BEST_PARAMS_PATH = os.getenv("BEST_PARAMS_PATH", "/app/shared_model/best_params.
 
 
 def load_and_prepare_data() -> pd.DataFrame:
-    """Load and prepare data for tuning."""
-    if not os.path.exists(DATA_PATH):
-        raise FileNotFoundError(f"Data file not found: {DATA_PATH}")
-    
-    df = pd.read_csv(DATA_PATH)
-    logger.info(f"Loaded {len(df)} data points")
-    
-    # Load Macro Data
-    if os.path.exists(MACRO_PATH):
-        macro_df = pd.read_csv(MACRO_PATH)
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        macro_df['timestamp'] = pd.to_datetime(
-            macro_df['timestamp'], format='mixed', errors='coerce'
-        )
+    """Load and prepare data for tuning from TimescaleDB."""
+    logger.info("Loading data from TimescaleDB...")
+    db = SessionLocal()
+    try:
+        # Load OHLCV
+        query = db.query(OHLCV).filter(OHLCV.symbol == 'BTCUSDT').order_by(OHLCV.timestamp.asc())
+        df = pd.read_sql(query.statement, db.bind)
         
-        df = pd.merge_asof(
-            df.sort_values('timestamp'),
-            macro_df.sort_values('timestamp'),
-            on='timestamp',
-            direction='backward'
-        )
+        if df.empty:
+            raise ValueError("No OHLCV data found in DB")
+            
+        logger.info(f"Loaded {len(df)} data points")
+
+        # Load Macro Data
+        macro_query = db.query(MacroIndicator).order_by(MacroIndicator.timestamp.asc())
+        macro_df_long = pd.read_sql(macro_query.statement, db.bind)
         
-        df[['fed_funds_rate', 'gold_price', 'dxy']] = \
-            df[['fed_funds_rate', 'gold_price', 'dxy']].ffill().fillna(0)
-    else:
-        logger.warning("Macro file not found, using zeros")
-        df['fed_funds_rate'] = 0
-        df['gold_price'] = 0
-        df['dxy'] = 0
-    
-    # Add technical indicators
-    df = add_technical_indicators(df)
-    
-    # Ensure safe haven columns exist
-    safe_cols = ['sp500', 'vix', 'nasdaq', 'oil_price']
-    for col in safe_cols:
-        if col not in df.columns:
-            df[col] = 0.0
+        if not macro_df_long.empty:
+            macro_df = macro_df_long.pivot(index='timestamp', columns='name', values='value')
+            macro_df.reset_index(inplace=True)
+            
+            # Merge
+            df = pd.merge_asof(df, macro_df, on='timestamp', direction='backward')
+            
+            # Fill NA
+            macro_cols = [c for c in macro_df.columns if c != 'timestamp']
+            df[macro_cols] = df[macro_cols].ffill().fillna(0)
+        else:
+            logger.warning("No Macro data found in DB.")
+            
+        # Add technical indicators
+        df = add_technical_indicators(df)
+        
+        # Ensure safe haven columns exist
+        safe_cols = ['sp500', 'vix', 'nasdaq', 'oil_price', 'fed_funds_rate', 'gold_price', 'dxy']
+        for col in safe_cols:
+            if col not in df.columns:
+                df[col] = 0.0
+                
+        return df
+    finally:
+        db.close()
     
     # Drop NaN values
     df = df.dropna()
