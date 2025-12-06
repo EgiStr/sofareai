@@ -28,12 +28,13 @@ inference_service = InferenceService()
 async def lifespan(app: FastAPI):
     """
     Lifespan context manager for startup and shutdown events.
-    Loads the model once on startup.
+    Loads the model once on startup and starts polling for updates.
     """
     try:
         logger.info("Starting up... Loading model.")
         inference_service.load_model()
-        logger.info("Model loaded successfully.")
+        inference_service.start_polling(interval=60) # Check every minute
+        logger.info("Model loaded successfully and polling started.")
     except Exception as e:
         logger.error(f"Failed to load model on startup: {e}")
         # We don't raise here to allow the app to start even if model fails (e.g. for health checks)

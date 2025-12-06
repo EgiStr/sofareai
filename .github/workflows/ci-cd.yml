@@ -73,6 +73,7 @@ jobs:
           pip install -r ingestion/requirements.txt
           pip install -r training/requirements.txt
           pip install -r serving/requirements.txt
+          pip install -e packages/sofare_common
           pip install pytest pytest-cov pytest-asyncio httpx
 
       - name: Run tests with coverage

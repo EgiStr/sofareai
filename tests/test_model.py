@@ -3,30 +3,32 @@ import torch
 import sys
 import os
 
-# Add training/src to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../training/src')))
+# Add packages to path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../packages/sofare_common/src')))
 
-from model import MultiModalLSTM
+from sofare_common.model import SofareM3
 
-class TestMultiModalModel(unittest.TestCase):
+class TestSofareM3(unittest.TestCase):
     def test_forward_pass(self):
         batch_size = 32
         seq_len = 60
-        input_size = 6
-        macro_size = 3
-        hidden_size = 64
+        micro_input_size = 6
+        macro_input_size = 3
+        safe_input_size = 4
         
-        model = MultiModalLSTM(input_size, macro_size, hidden_size)
+        model = SofareM3(micro_input_size, macro_input_size, safe_input_size)
         
         # Create dummy input
-        x_seq = torch.randn(batch_size, seq_len, input_size)
-        x_macro = torch.randn(batch_size, macro_size)
+        x_micro = torch.randn(batch_size, seq_len, micro_input_size)
+        x_macro = torch.randn(batch_size, macro_input_size)
+        x_safe = torch.randn(batch_size, safe_input_size)
         
         # Forward pass
-        output = model(x_seq, x_macro)
+        cls_out, reg_out = model(x_micro, x_macro, x_safe)
         
         # Check output shape
-        self.assertEqual(output.shape, (batch_size, 1))
+        self.assertEqual(cls_out.shape, (batch_size, 2))
+        self.assertEqual(reg_out.shape, (batch_size, 1))
 
 if __name__ == '__main__':
     unittest.main()

@@ -7,6 +7,8 @@ import numpy as np
 import subprocess
 import io
 import logging
+import threading
+import time
 import mlflow
 import mlflow.pytorch
 from sklearn.preprocessing import MinMaxScaler
@@ -25,64 +27,103 @@ class InferenceService:
         self.scalers = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.sequence_length = 60  # Default
+        self.current_version = None
+        self.lock = threading.Lock()
+        self.polling_thread = None
+        self.stop_polling = False
+
+    def start_polling(self, interval=300):
+        """Starts a background thread to poll for model updates."""
+        if self.polling_thread is not None and self.polling_thread.is_alive():
+            logger.warning("Polling thread already running.")
+            return
+
+        self.stop_polling = False
+        self.polling_thread = threading.Thread(target=self._poll_loop, args=(interval,), daemon=True)
+        self.polling_thread.start()
+        logger.info(f"Started model polling thread with interval {interval}s.")
+
+    def _poll_loop(self, interval):
+        """Background loop to check for model updates."""
+        while not self.stop_polling:
+            try:
+                self.load_model()
+            except Exception as e:
+                logger.error(f"Error in model polling loop: {e}")
+            time.sleep(interval)
 
     def load_model(self):
-        """Loads the model from MLflow Registry."""
-        model_uri = f"models:/{self.model_name}/{self.stage}"
-        logger.info(f"Loading model from MLflow Registry: {model_uri}...")
-        
+        """Loads the model from MLflow Registry if a newer version is available."""
         try:
-            # Load Model
-            self.model = mlflow.pytorch.load_model(model_uri, map_location=self.device)
-            self.model.eval()
-            logger.info("Model loaded successfully from MLflow.")
-            
-            # Load Artifacts (Config & Scalers)
-            # We need to find the run_id associated with this model version
             client = mlflow.tracking.MlflowClient()
             latest_versions = client.get_latest_versions(self.model_name, stages=[self.stage])
+            
             if not latest_versions:
                  # Fallback to None or latest
                  latest_versions = client.get_latest_versions(self.model_name, stages=["None"])
                  if not latest_versions:
                      raise RuntimeError(f"No model found for {self.model_name}")
             
-            version = latest_versions[0]
-            run_id = version.run_id
-            logger.info(f"Loading artifacts from run_id: {run_id}")
+            target_version_obj = latest_versions[0]
+            target_version = target_version_obj.version
+            run_id = target_version_obj.run_id
+
+            if self.current_version == target_version:
+                logger.debug(f"Model {self.model_name} (Stage: {self.stage}) is up to date (Version: {target_version}).")
+                return
+
+            logger.info(f"New model version detected: {target_version} (Current: {self.current_version}). Loading...")
+            
+            model_uri = f"models:/{self.model_name}/{self.stage}"
+            
+            # Load Model
+            new_model = mlflow.pytorch.load_model(model_uri, map_location=self.device)
+            new_model.eval()
             
             # Download artifacts
             local_dir = mlflow.artifacts.download_artifacts(run_id=run_id, dst_path="/tmp/model_artifacts")
             
             # Load Config
             config_path = os.path.join(local_dir, "metadata", "feature_info.json")
+            new_config = None
             if os.path.exists(config_path):
                 with open(config_path, "r") as f:
-                    self.config = json.load(f)
-                self.sequence_length = self.config.get("sequence_length", 60)
+                    new_config = json.load(f)
             else:
                 logger.warning("Config not found in artifacts. Using defaults.")
                 
             # Load Scalers
             scalers_path = os.path.join(local_dir, "preprocessing", "scalers.pkl")
+            new_scalers = None
             if os.path.exists(scalers_path):
                 with open(scalers_path, "rb") as f:
-                    self.scalers = pickle.load(f)
-                logger.info("Scalers loaded successfully.")
+                    new_scalers = pickle.load(f)
             else:
                 logger.warning("Scalers not found in artifacts. Using fallback.")
-                self.scalers = {
+                new_scalers = {
                     "seq": MinMaxScaler(),
                     "macro": MinMaxScaler(),
                     "safe": MinMaxScaler(),
                     "target": MinMaxScaler()
                 }
-                self.scalers["target"].fit([[0], [1]])
+                new_scalers["target"].fit([[0], [1]])
+
+            # Atomic Update
+            with self.lock:
+                self.model = new_model
+                self.config = new_config
+                self.scalers = new_scalers
+                self.current_version = target_version
+                if self.config:
+                    self.sequence_length = self.config.get("sequence_length", 60)
+            
+            logger.info(f"Successfully updated model to version {target_version}.")
                 
         except Exception as e:
             logger.error(f"Failed to load model from MLflow: {e}")
             # Fallback to local if needed, or raise
-            raise e
+            if self.model is None: # Only raise if we don't have a model at all
+                raise e
 
     def _read_last_lines(self, n_lines):
         """Read last n lines from DB."""
