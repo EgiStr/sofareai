@@ -825,15 +825,24 @@ def train():
                     json.dump(drift_report, f, indent=2)
                 mlflow.log_artifact("drift_report.json", "monitoring")
             
-            # Log model to MLflow
+            # Log model to MLflow and Register
             import shutil
             model_path = "model"
             if os.path.exists(model_path):
                 shutil.rmtree(model_path)
-            mlflow.pytorch.save_model(model, model_path, pip_requirements=["torch", "pandas", "numpy", "scikit-learn", "transformers"])
-            logger.info(f"Model saved to {model_path}, contents: {os.listdir(model_path)}")
-            mlflow.log_artifact(model_path, "model")
-            logger.info("Model artifact logged to MLflow")
+            
+            # Log model and register it in one go
+            mlflow.pytorch.log_model(
+                model, 
+                "model", 
+                pip_requirements=["torch", "pandas", "numpy", "scikit-learn", "transformers"],
+                registered_model_name="SofareM3"
+            )
+            logger.info("Model logged and registered to MLflow as 'SofareM3'")
+            
+            # Also save locally for backward compatibility (optional, but good for debugging)
+            torch.save(model.state_dict(), "model_weights.pth")
+            mlflow.log_artifact("model_weights.pth", "model_weights")
             
             # ===== SEMANTIC VERSIONING =====
             # Determine version bump based on metrics improvement

@@ -7,6 +7,8 @@ import numpy as np
 import subprocess
 import io
 import logging
+import mlflow
+import mlflow.pytorch
 from sklearn.preprocessing import MinMaxScaler
 from sofare_common.model import SofareM3
 from sofare_common.features import add_technical_indicators
@@ -15,69 +17,72 @@ from sofare_common import SessionLocal, OHLCV, MacroIndicator
 logger = logging.getLogger(__name__)
 
 class InferenceService:
-    def __init__(self, model_dir="/app/shared_model", data_path="/app/data/ohlcv.csv", macro_path="/app/data/macro.csv"):
-        self.model_dir = model_dir
-        self.data_path = data_path
-        self.macro_path = macro_path
+    def __init__(self, model_name="SofareM3", stage="Production"):
+        self.model_name = model_name
+        self.stage = stage
         self.model = None
         self.config = None
         self.scalers = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.sequence_length = 60  # Default, will be updated from config if available
+        self.sequence_length = 60  # Default
 
     def load_model(self):
-        """Loads the model, config, and scalers from disk."""
-        logger.info(f"Loading model from {self.model_dir}...")
+        """Loads the model from MLflow Registry."""
+        model_uri = f"models:/{self.model_name}/{self.stage}"
+        logger.info(f"Loading model from MLflow Registry: {model_uri}...")
         
-        if not os.path.exists(self.model_dir):
-            raise FileNotFoundError(f"Model directory not found: {self.model_dir}")
-
-        # 1. Load Config
-        config_path = os.path.join(self.model_dir, "model_config.json")
-        if not os.path.exists(config_path):
-            raise FileNotFoundError(f"Config not found: {config_path}")
+        try:
+            # Load Model
+            self.model = mlflow.pytorch.load_model(model_uri, map_location=self.device)
+            self.model.eval()
+            logger.info("Model loaded successfully from MLflow.")
             
-        with open(config_path, "r") as f:
-            self.config = json.load(f)
+            # Load Artifacts (Config & Scalers)
+            # We need to find the run_id associated with this model version
+            client = mlflow.tracking.MlflowClient()
+            latest_versions = client.get_latest_versions(self.model_name, stages=[self.stage])
+            if not latest_versions:
+                 # Fallback to None or latest
+                 latest_versions = client.get_latest_versions(self.model_name, stages=["None"])
+                 if not latest_versions:
+                     raise RuntimeError(f"No model found for {self.model_name}")
             
-        # Update sequence length from config if present, else default to 60
-        self.sequence_length = self.config.get("sequence_length", 60)
-
-        # 2. Initialize Model
-        # Filter config args to match SofareM3 signature
-        model_args = {k: v for k, v in self.config.items() if k in [
-            "micro_input_size", "macro_input_size", "safe_input_size", 
-            "hidden_size", "embed_dim", "dropout"
-        ]}
-        
-        self.model = SofareM3(**model_args)
-        self.model.to(self.device)
-
-        # 3. Load Weights
-        weights_path = os.path.join(self.model_dir, "model_weights.pth")
-        if not os.path.exists(weights_path):
-            raise FileNotFoundError(f"Weights not found: {weights_path}")
+            version = latest_versions[0]
+            run_id = version.run_id
+            logger.info(f"Loading artifacts from run_id: {run_id}")
             
-        self.model.load_state_dict(torch.load(weights_path, map_location=self.device))
-        self.model.eval()
-        logger.info("Model loaded successfully.")
-
-        # 4. Load Scalers
-        scalers_path = os.path.join(self.model_dir, "scalers.pkl")
-        if os.path.exists(scalers_path):
-            with open(scalers_path, "rb") as f:
-                self.scalers = pickle.load(f)
-            logger.info("Scalers loaded successfully.")
-        else:
-            logger.warning("Scalers not found. Using fallback (unfitted) scalers. PREDICTIONS WILL BE INACCURATE.")
-            self.scalers = {
-                "seq": MinMaxScaler(),
-                "macro": MinMaxScaler(),
-                "safe": MinMaxScaler(),
-                "target": MinMaxScaler()
-            }
-            # Fit dummy to prevent errors
-            self.scalers["target"].fit([[0], [1]])
+            # Download artifacts
+            local_dir = mlflow.artifacts.download_artifacts(run_id=run_id, dst_path="/tmp/model_artifacts")
+            
+            # Load Config
+            config_path = os.path.join(local_dir, "metadata", "feature_info.json")
+            if os.path.exists(config_path):
+                with open(config_path, "r") as f:
+                    self.config = json.load(f)
+                self.sequence_length = self.config.get("sequence_length", 60)
+            else:
+                logger.warning("Config not found in artifacts. Using defaults.")
+                
+            # Load Scalers
+            scalers_path = os.path.join(local_dir, "preprocessing", "scalers.pkl")
+            if os.path.exists(scalers_path):
+                with open(scalers_path, "rb") as f:
+                    self.scalers = pickle.load(f)
+                logger.info("Scalers loaded successfully.")
+            else:
+                logger.warning("Scalers not found in artifacts. Using fallback.")
+                self.scalers = {
+                    "seq": MinMaxScaler(),
+                    "macro": MinMaxScaler(),
+                    "safe": MinMaxScaler(),
+                    "target": MinMaxScaler()
+                }
+                self.scalers["target"].fit([[0], [1]])
+                
+        except Exception as e:
+            logger.error(f"Failed to load model from MLflow: {e}")
+            # Fallback to local if needed, or raise
+            raise e
 
     def _read_last_lines(self, n_lines):
         """Read last n lines from DB."""
