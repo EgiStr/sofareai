@@ -36,34 +36,6 @@ function initializeDashboard() {
         });
     });
 
-    // Custom range button
-    const loadCustomRangeBtn = document.getElementById('loadCustomRange');
-    if (loadCustomRangeBtn) {
-        loadCustomRangeBtn.addEventListener('click', async function() {
-            const startDateInput = document.getElementById('startDate');
-            const endDateInput = document.getElementById('endDate');
-
-            if (!startDateInput.value || !endDateInput.value) {
-                showToast('Please select both start and end dates', 'warning');
-                return;
-            }
-
-            const startDate = new Date(startDateInput.value);
-            const endDate = new Date(endDateInput.value);
-
-            if (startDate >= endDate) {
-                showToast('Start date must be before end date', 'error');
-                return;
-            }
-
-            // Deactivate timeframe buttons when using custom range
-            document.querySelectorAll('.timeframe-btn').forEach(btn => btn.classList.remove('active'));
-
-            // Load custom range data
-            await loadCustomRangeData(startDate.getTime(), endDate.getTime());
-        });
-    }
-
     // Initialize real-time updates
     startRealTimeUpdates();
 
@@ -285,45 +257,7 @@ function updateSignals() {
     }
 }
 
-async function loadCustomRangeData(startTime, endTime) {
-    if (!window.mainChart) return;
 
-    try {
-        showToast(`Loading custom range data from ${new Date(startTime).toLocaleString()} to ${new Date(endTime).toLocaleString()}...`, 'info');
-
-        // Load data for the custom range
-        const response = await fetchData(`/api/ohlcv?start=${startTime}&end=${endTime}&interval=1m`);
-
-        if (!response || response.error || !response.data || response.data.length === 0) {
-            showToast('No data available for the selected date range', 'warning');
-            return;
-        }
-
-        const ohlcvData = response.data;
-        console.log(`Loaded ${ohlcvData.length} candles for custom range (${new Date(startTime).toISOString()} to ${new Date(endTime).toISOString()})`);
-
-        // Clear any existing timeframe data - no caching for custom ranges
-        timeframeData = {};
-        timeframeData['custom'] = {
-            data: ohlcvData,
-            startTime: startTime,
-            endTime: endTime,
-            oldestTimestamp: startTime,
-            newestTimestamp: endTime
-        };
-
-        currentTimeframe = 'custom';
-
-        // Update chart with fresh data
-        updateChartWithCustomRangeData(ohlcvData, startTime, endTime);
-
-        showToast(`Custom range loaded (${ohlcvData.length} candles)`, 'success');
-
-    } catch (error) {
-        console.error('Error loading custom range data:', error);
-        showToast('Failed to load custom range data', 'error');
-    }
-}
 
 // Helper function to update chart with timeframe data
 function updateChartWithTimeframeData(ohlcvData, interval) {
@@ -381,74 +315,6 @@ function updateChartWithTimeframeData(ohlcvData, interval) {
             crosshairs: {
                 show: true,
                 stroke: { color: '#505050', width: 1, dashArray: 3 }
-            }
-        }
-    });
-    
-    // Update current price display
-    const latestData = validData[validData.length - 1];
-    if (latestData) {
-        updateCurrentPrice(latestData.close);
-    }
-}
-
-// Helper function to update chart with custom range data
-function updateChartWithCustomRangeData(ohlcvData, startTime, endTime) {
-    // Format data for ApexCharts
-    const validData = ohlcvData.filter(item => 
-        item.timestamp && typeof item.close === 'number'
-    );
-    
-    const candleData = validData.map(item => ({
-        x: new Date(item.timestamp).getTime(),
-        y: [item.open, item.high, item.low, item.close]
-    }));
-    
-    const volumeData = validData.map(item => ({
-        x: new Date(item.timestamp).getTime(),
-        y: item.volume,
-        fillColor: item.close >= item.open ? '#089981' : '#f23645'
-    }));
-    
-    // Update chart series
-    window.mainChart.updateSeries([{
-        name: `BTC/USDT (Custom Range)`,
-        data: candleData
-    }, {
-        name: 'Volume',
-        data: volumeData
-    }]);
-    
-    // Update x-axis with custom range formatting
-    window.mainChart.updateOptions({
-        xaxis: {
-            type: 'datetime',
-            min: startTime,
-            max: endTime,
-            labels: {
-                datetimeUTC: false,
-                style: { colors: '#787b86', fontSize: '11px' },
-                datetimeFormatter: {
-                    year: 'yyyy',
-                    month: "MMM 'yy",
-                    day: 'dd MMM',
-                    hour: 'HH:mm',
-                    minute: 'HH:mm'
-                }
-            },
-            axisBorder: { color: '#2a2e39' },
-            axisTicks: { color: '#2a2e39' },
-            crosshairs: {
-                show: true,
-                stroke: { color: '#505050', width: 1, dashArray: 3 }
-            }
-        },
-        title: {
-            text: `BTC/USDT - Custom Range: ${new Date(startTime).toLocaleDateString()} to ${new Date(endTime).toLocaleDateString()}`,
-            style: {
-                fontSize: '14px',
-                fontWeight: 'bold',
-                color: '#d1d4dc'
             }
         }
     });

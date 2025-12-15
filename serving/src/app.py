@@ -80,16 +80,14 @@ def read_last_lines(filepath, n_lines):
 def get_latest_data():
     """
     Fetches the latest sequence of data for inference.
-    In a real production system, this would come from a Feature Store.
-    Here we read from the shared CSV.
+    Reads only the most recent data for efficiency.
     """
     if not os.path.exists(DATA_PATH):
         return None, None, None
 
     try:
-        # Optimize: Read only the last 2000 lines (enough for indicators to stabilize)
-        # instead of reading the entire file
-        df = read_last_lines(DATA_PATH, 2000)
+        # Read only the last 500 lines for fast inference
+        df = read_last_lines(DATA_PATH, 500)
         
         if len(df) < SEQUENCE_LENGTH + 50: # Buffer for indicators
             return None, None, None
@@ -499,104 +497,32 @@ def health():
     return {"status": "ok"}
 
 @app.get("/api/ohlcv")
-def get_ohlcv_data(limit: int = 100, interval: str = "1m", start: int = None, end: int = None):
+def get_ohlcv_data(limit: int = 100, interval: str = "1m"):
     """Get recent OHLCV data for charting
     
     Args:
-        limit: Number of candles to return (max 2000)
+        limit: Number of candles to return (max 5000)
         interval: Candle interval (1m, 5m, 15m, 1h, 4h, 1d) - aggregates from 1m data
-        start: Start timestamp (ms)
-        end: End timestamp (ms)
     """
     if not os.path.exists(DATA_PATH):
         return {"error": "No data available"}
 
     try:
-        df = pd.DataFrame()
+        # Limit query: Use efficient tail reading
+        limit = min(limit, 5000)
         
-        # Dynamic Loading Strategy
-        if start is not None or end is not None:
-            # Calculate if this is recent data (within last 30 days)
-            current_time = int(time.time() * 1000)
-            thirty_days_ago = current_time - (30 * 24 * 60 * 60 * 1000)
-            
-            is_recent_data = False
-            if start is not None and start >= thirty_days_ago:
-                is_recent_data = True
-            elif end is not None and end >= thirty_days_ago:
-                is_recent_data = True
-            elif start is None and end is None:
-                is_recent_data = True  # Default to recent for limit queries
-            
-            if is_recent_data:
-                # For recent data, use efficient tail reading
-                # Estimate how many records we need based on time range
-                if start is not None and end is not None:
-                    time_range_ms = end - start
-                    # Estimate records needed (1 record per minute)
-                    estimated_records = int(time_range_ms / (60 * 1000)) + 1000  # Buffer
-                else:
-                    # For limit queries, read enough for the limit
-                    multiplier = 1
-                    if interval == '5m': multiplier = 5
-                    elif interval == '15m': multiplier = 15
-                    elif interval == '30m': multiplier = 30
-                    elif interval == '1h': multiplier = 60
-                    elif interval == '4h': multiplier = 240
-                    elif interval == '1d': multiplier = 1440
-                    
-                    estimated_records = limit * multiplier * 2  # Double for safety
-                
-                # Cap at reasonable limit
-                estimated_records = min(estimated_records, 100000)
-                
-                # Read from tail
-                df = read_last_lines(DATA_PATH, estimated_records)
-                
-                # Filter by timestamp range if specified
-                if start is not None:
-                    df = df[df.iloc[:, 0] >= start]
-                if end is not None:
-                    df = df[df.iloc[:, 0] <= end]
-            else:
-                # For older data, use chunking approach
-                chunks = []
-                chunk_size = 50000
-                
-                for chunk in pd.read_csv(DATA_PATH, chunksize=chunk_size):
-                    chunk_ts = pd.to_numeric(chunk.iloc[:, 0], errors='coerce')
-                    
-                    mask = pd.Series(True, index=chunk.index)
-                    if start is not None:
-                        mask &= (chunk_ts >= start)
-                    if end is not None:
-                        mask &= (chunk_ts <= end)
-                    
-                    if mask.any():
-                        chunks.append(chunk[mask])
-                    
-                    # Optimization: If we passed the end time, stop reading
-                    if end is not None and chunk_ts.max() > end:
-                        break
-                
-                if chunks:
-                    df = pd.concat(chunks)
-        else:
-            # Limit query: Use efficient tail reading
-            limit = min(limit, 5000)
-            
-            # Calculate required lines based on interval
-            multiplier = 1
-            if interval == '5m': multiplier = 5
-            elif interval == '15m': multiplier = 15
-            elif interval == '30m': multiplier = 30
-            elif interval == '1h': multiplier = 60
-            elif interval == '4h': multiplier = 240
-            elif interval == '1d': multiplier = 1440
-            
-            required_lines = limit * multiplier
-            # Add buffer for aggregation edge cases
-            df = read_last_lines(DATA_PATH, required_lines + 100)
+        # Calculate required lines based on interval
+        multiplier = 1
+        if interval == '5m': multiplier = 5
+        elif interval == '15m': multiplier = 15
+        elif interval == '30m': multiplier = 30
+        elif interval == '1h': multiplier = 60
+        elif interval == '4h': multiplier = 240
+        elif interval == '1d': multiplier = 1440
+        
+        required_lines = limit * multiplier
+        # Read only recent data
+        df = read_last_lines(DATA_PATH, required_lines + 100)
 
         if len(df) == 0:
             return {"error": "No data available"}
@@ -636,9 +562,8 @@ def get_ohlcv_data(limit: int = 100, interval: str = "1m", start: int = None, en
                 'volume': 'sum'
             }).dropna().reset_index()
 
-        # Take last 'limit' records if not range query
-        if start is None and end is None:
-            df = df.tail(limit)
+        # Take last 'limit' records
+        df = df.tail(limit)
 
         # Format for frontend (OHLC format)
         data = []
