@@ -1,4 +1,6 @@
 # SOFARE-AI: MLOps Pipeline untuk Prediksi Harga Cryptocurrency
+<img width="1587" height="2245" alt="Yellow and Cream Budgeting Finance Infographic Poster" src="https://github.com/user-attachments/assets/c75472bc-be74-45a6-9d69-68c6e2050fa8" />
+
 
 SOFARE-AI adalah sistem MLOps (Machine Learning Operations) end-to-end yang komprehensif untuk prediksi harga cryptocurrency. Sistem ini mengimplementasikan praktik terbaik MLOps modern dengan fokus pada reliability, scalability, dan automated operations dalam production environment.
 
