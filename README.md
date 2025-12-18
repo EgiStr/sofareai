@@ -405,45 +405,6 @@ test_data = data[val_end:]
 - ✅ Proper temporal validation
 - ✅ Held-out test set untuk evaluasi objektif
 
-### Deployment Strategies
-
-**Blue-Green Deployment:**
-```mermaid
-graph TB
-    LB[Load Balancer]
-    
-    subgraph Blue["Blue (Active)"]
-        B1[Ingestion]
-        B2[Training]
-        B3[Serving]
-    end
-    
-    subgraph Green["Green (Standby)"]
-        G1[Ingestion]
-        G2[Training]
-        G3[Serving]
-    end
-    
-    LB -->|Active| Blue
-    LB -.->|Standby| Green
-```
-
-**Canary Deployment:**
-```mermaid
-graph LR
-    LB[Load Balancer]
-    
-    subgraph Stable
-        S[Production v1.0.0]
-    end
-    
-    subgraph Canary
-        C[New Version v1.1.0]
-    end
-    
-    LB -->|90%| Stable
-    LB -->|10%| Canary
-```
 
 ### Drift Detection
 
