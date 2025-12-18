@@ -14,6 +14,12 @@ SOFARE-AI mengikuti framework MLOps yang mencakup seluruh lifecycle machine lear
 - **Model Monitoring:** Real-time drift detection dan performance monitoring
 - **Model Governance:** Version control, rollback, dan audit trails
 
+<img width="1359" height="613" alt="image" src="https://github.com/user-attachments/assets/3b5f3f02-ab39-407d-9807-1f481b4b5f64" />
+<img width="1359" height="613" alt="image" src="https://github.com/user-attachments/assets/188ae72b-f405-4f21-9749-c6eb08193d47" />
+<img width="1359" height="613" alt="image" src="https://github.com/user-attachments/assets/8d217ebd-2df4-4f16-9b4d-771f774b31a5" />
+
+
+
 ## 🏗️ Arsitektur Sistem
 
 ### Microservices Architecture
